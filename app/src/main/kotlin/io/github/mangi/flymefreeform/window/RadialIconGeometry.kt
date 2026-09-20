@@ -3,9 +3,14 @@ package io.github.mangi.flymefreeform.window
 /** 扇形与图标共享屏幕比例；条目数量只改变角度，不改变半径。 */
 internal object RadialIconGeometry {
     private const val BASE_SHORT_EDGE_DP = 400f
-    private const val BASE_RADIUS_DP = 242f
-    private const val BASE_ICON_DIAMETER_DP = 44f
-    private const val BASE_ITEM_PADDING_DP = 3.25f
+
+    // 7 条目 84° 弧、槽位间隔 12°：相邻圆心距 = 2R·sin(6°) ≈ 0.209R。
+    // 硬约束 d + 留白 ≤ 0.209R，即图标/半径比上限约 0.209（原值 44/242 = 0.182）。
+    // 236/47.5/1.5 组合：弦长 49.34dp ≥ 47.5+1.5，图标比 0.201（相对 +11%），
+    // 图标绝对 +8%、容器 −2.5%；留白 1.5dp 是选中圈外扩的最小安全距离，再小会贴到相邻图标。
+    private const val BASE_RADIUS_DP = 236f
+    private const val BASE_ICON_DIAMETER_DP = 47.5f
+    private const val BASE_ITEM_PADDING_DP = 1.5f
 
     fun fit(
         width: Float,

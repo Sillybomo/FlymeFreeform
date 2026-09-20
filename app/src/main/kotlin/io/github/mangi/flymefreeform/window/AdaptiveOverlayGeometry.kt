@@ -33,7 +33,11 @@ internal data class RadialVisualMetrics(
     val selectionKeepRadius: Float,
     val itemPadding: Float,
     val pixelsPerBaseDp: Float,
-)
+) {
+    /** 选中圈最大宽度：与几何留白解耦，固定按图标直径的 6.8% 取值（约等于原 3.25dp 观感）。 */
+    val selectionRingMaxWidth: Float
+        get() = iconDiameter * 0.0684f
+}
 
 internal data class PanelVisualMetrics(
     val bounds: OverlayBounds,

@@ -16,10 +16,10 @@ class RadialIconGeometryTest {
     fun baselineMatchesFixedDimensionsForEveryItemCount() {
         for (count in 1..7) {
             val metrics = fit(count = count)
-            assertEquals(242f, metrics.radius, 0.001f)
-            assertEquals(44f, metrics.iconDiameter, 0.001f)
+            assertEquals(236f, metrics.radius, 0.001f)
+            assertEquals(47.5f, metrics.iconDiameter, 0.001f)
             assertEquals(metrics.iconDiameter, metrics.plateDiameter, 0f)
-            assertEquals(3.25f, metrics.itemPadding, 0.001f)
+            assertEquals(1.5f, metrics.itemPadding, 0.001f)
             assertEquals(1f, metrics.pixelsPerBaseDp, 0.001f)
         }
     }
@@ -59,7 +59,7 @@ class RadialIconGeometryTest {
         val full = fit()
         val narrow = fit(insets = insets)
         assertTrue(narrow.radius < full.radius)
-        assertEquals(242f / 44f, narrow.radius / narrow.iconDiameter, 0.001f)
+        assertEquals(236f / 47.5f, narrow.radius / narrow.iconDiameter, 0.001f)
         assertEquals(0.9f, narrow.selectionEnterRadius / narrow.iconDiameter, 0.001f)
         assertEquals(1.25f, narrow.selectionKeepRadius / narrow.iconDiameter, 0.001f)
         for (count in 1..7) assertEquals(narrow, fit(insets = insets, count = count))

@@ -501,7 +501,7 @@ internal class CornerRadialOverlayView(
                 } else {
                     drawMoreItem(centerX, centerY, diameter, contentAlpha)
                 }
-                val strokeWidth = metrics.itemPadding * scale * ringProgress
+                val strokeWidth = metrics.selectionRingMaxWidth * scale * ringProgress
                 if (strokeWidth > 0f) {
                     drawCircle(
                         color = Color.White,
