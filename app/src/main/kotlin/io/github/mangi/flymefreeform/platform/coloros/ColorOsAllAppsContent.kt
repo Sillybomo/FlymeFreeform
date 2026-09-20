@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.os.IInterface
 import android.provider.Settings
+import android.util.Log
 import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
@@ -133,7 +134,52 @@ internal class ColorOsAllAppsContent(loader: ClassLoader) {
 
     fun bindClose(action: () -> Unit) {
         if (closed) return
-        view.findViewById<View>(resourceId("close", "id"))?.setOnClickListener { action() }
+        // @author bomo：ColorOS 17 的标题栏里「关闭」按钮 id 由 close 改成了 cancel。
+        // 实测 view 树：title_layout > COUIToolbar(all_app_toolbar) > COUIActionMenuView
+        // > COUIActionMenuItemView id=cancel。旧实现按 id/close 查找必然落空，
+        // 按钮点击由原厂 listener 接管（驱动它自己的侧栏状态机），与模块的独立窗口无关，
+        // 因此表现为"点了没反应"。这里改为按 id 名 cancel 优先、close 回退查找。
+        val target =
+            findByIdName(view, CANCEL_ID_NAME)
+                ?: findByIdName(view, LEGACY_CLOSE_ID_NAME)
+                ?: runCatching { view.findViewById<View>(resourceId(LEGACY_CLOSE_ID_NAME, "id")) }.getOrNull()
+        Log.w(
+            TAG,
+            "ALL_APPS_CLOSE_BIND picked=${target?.javaClass?.name} clickable=${target?.isClickable} " +
+                "enabled=${target?.isEnabled}",
+        )
+        if (target == null) dumpViewTree(view, 0)
+        target?.setOnClickListener { action() }
+    }
+
+    /** @author bomo 兜底诊断：按层级打印 view 树与 id 名，定位控件真实位置。 */
+    private fun dumpViewTree(node: View, depth: Int) {
+        if (depth > 12) return
+        val idLabel =
+            if (node.id != View.NO_ID) {
+                runCatching { context.resources.getResourceEntryName(node.id) }
+                    .getOrDefault("0x${node.id.toString(16)}")
+            } else {
+                "-"
+            }
+        Log.w(TAG, "TREE ${"  ".repeat(depth)}${node.javaClass.simpleName} id=$idLabel")
+        if (node is ViewGroup) {
+            for (index in 0 until node.childCount) dumpViewTree(node.getChildAt(index), depth + 1)
+        }
+    }
+
+    /** @author bomo 按资源 id 名递归匹配，避免依赖特定资源包 id 常量。 */
+    private fun findByIdName(node: View, name: String): View? {
+        if (node.id != View.NO_ID) {
+            val entry = runCatching { context.resources.getResourceEntryName(node.id) }.getOrNull()
+            if (entry == name) return node
+        }
+        if (node is ViewGroup) {
+            for (index in 0 until node.childCount) {
+                findByIdName(node.getChildAt(index), name)?.let { return it }
+            }
+        }
+        return null
     }
 
     fun bindAdapter(adapter: Any, onClick: (Boolean, () -> Unit) -> Unit) {
@@ -401,6 +447,15 @@ internal class ColorOsAllAppsContent(loader: ClassLoader) {
     }
 
     companion object {
+        /** @author bomo logcat 标签；「全部」面板运行在 `com.coloros.smartsidebar:ui` 进程。 */
+        const val TAG = "FlymeFreeformAllApps"
+
+        /** @author bomo ColorOS 17 标题栏「关闭」按钮的资源 id 名（实测 view 树）。 */
+        const val CANCEL_ID_NAME = "cancel"
+
+        /** @author bomo ColorOS 16 及更早版本的「关闭」按钮 id 名，作为回退。 */
+        const val LEGACY_CLOSE_ID_NAME = "close"
+
         const val ALL_CLASS = "com.oplus.smartsidebar.panelview.edgepanel.allpanel.AllAppPanelView"
         const val ADAPTER_CLASS = "com.oplus.smartsidebar.panelview.edgepanel.allpanel.AllAppRecyclerAdapter"
         const val ROUTER_CLASS = "com.oplus.smartsidebar.panelview.edgepanel.data.viewdatahandlers.AllAppDataHandlerImpl"
