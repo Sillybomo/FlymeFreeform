@@ -17,8 +17,15 @@ internal class SystemUiHookInstaller(
 
     fun install(classLoader: ClassLoader) {
         try {
-            val applicationClass = classLoader.loadClass(SYSTEM_UI_APPLICATION_CLASS)
-            val onCreate = applicationClass.getDeclaredMethod("onCreate")
+            // ColorOS 17 把 SystemUI 的 Application 迁到 application.impl 包下；
+            // 按候选顺序解析，并用 getMethod 沿层次查找 onCreate。
+            val applicationClass =
+                SYSTEM_UI_APPLICATION_CLASSES
+                    .firstNotNullOfOrNull { name ->
+                        runCatching { classLoader.loadClass(name) }.getOrNull()
+                    }
+                    ?: throw ClassNotFoundException(SYSTEM_UI_APPLICATION_CLASSES.first())
+            val onCreate = applicationClass.getMethod("onCreate")
             module
                 .hook(onCreate)
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
@@ -56,6 +63,12 @@ internal class SystemUiHookInstaller(
 
     private companion object {
         const val TAG = "FlymeFreeform"
-        const val SYSTEM_UI_APPLICATION_CLASS = "com.android.systemui.SystemUIApplication"
+        val SYSTEM_UI_APPLICATION_CLASSES =
+            listOf(
+                // ColorOS 17
+                "com.android.systemui.application.impl.SystemUIApplicationImpl",
+                // ColorOS 16 及更早
+                "com.android.systemui.SystemUIApplication",
+            )
     }
 }

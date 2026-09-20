@@ -17,11 +17,15 @@ internal object ColorOsSidebarTarget {
     const val PREPARE_METHOD = "bindServiceForTransferDock"
 
     fun supportedUid(context: Context): Int? {
-        if (Build.VERSION.SDK_INT != 36) return null
         val manager = context.packageManager
         return try {
             val info = manager.getPackageInfo(PACKAGE_NAME, PackageManager.PackageInfoFlags.of(0))
-            if (info.longVersionCode != 160014006L || info.versionName != "16.14.6") return null
+            val supportedVersion = when {
+                Build.VERSION.SDK_INT == 36 && info.longVersionCode == 160014006L && info.versionName == "16.14.6" -> true
+                Build.VERSION.SDK_INT == 37 && info.longVersionCode == 170009002L && info.versionName == "17.9.2" -> true
+                else -> false
+            }
+            if (!supportedVersion) return null
             val service =
                 manager.getServiceInfo(
                     ComponentName(PACKAGE_NAME, SERVICE_CLASS),

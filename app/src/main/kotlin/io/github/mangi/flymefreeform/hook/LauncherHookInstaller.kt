@@ -38,6 +38,7 @@ internal class LauncherHookInstaller(
     private var suppressUntilTerminal = false
     private var pilfered = false
     private var inputMonitorField: Field? = null
+    private var inputMonitorInnerField: Field? = null
     private var forcePilferPointersMethod: Method? = null
     private var lastClaimLogAt = -CLAIM_LOG_INTERVAL_MS
     private var lastPilferFailureAt = -PILFER_FAILURE_LOG_INTERVAL_MS
@@ -46,14 +47,12 @@ internal class LauncherHookInstaller(
         try {
             val serviceClass = classLoader.loadClass(TOUCH_SERVICE_CLASS)
             val inputMethod =
-                serviceClass.getDeclaredMethod(INPUT_METHOD_NAME, InputEvent::class.java).apply {
-                    isAccessible = true
-                }
-            val monitorClass = classLoader.loadClass(INPUT_MONITOR_CLASS)
-            inputMonitorField =
-                serviceClass.getDeclaredField(INPUT_MONITOR_FIELD).apply { isAccessible = true }
-            forcePilferPointersMethod =
-                monitorClass.getDeclaredMethod(FORCE_PILFER_METHOD).apply { isAccessible = true }
+                resolveInputEntry(serviceClass)
+                    ?: throw ReflectiveOperationException(
+                        "$TOUCH_SERVICE_CLASS#$INPUT_METHOD_NAME unavailable",
+                    )
+            inputMethod.isAccessible = true
+            resolveInputMonitor(serviceClass)
 
             module
                 .hook(inputMethod)
@@ -78,6 +77,74 @@ internal class LauncherHookInstaller(
             module.log(Log.WARN, TAG, "LAUNCHER_CORNER_INPUT_TARGET_LINKAGE_FAILED", exception)
         }
     }
+
+    /**
+     * ColorOS 16 的入口方法名固定；ColorOS 17 起桌面方法名被混淆（如 `K`），
+     * 因此按签名在类层次里定位唯一接收 InputEvent 的实例方法，优先取最派生声明。
+     */
+    private fun resolveInputEntry(serviceClass: Class<*>): Method? {
+        val candidates = mutableListOf<Method>()
+        var current: Class<*>? = serviceClass
+        while (current != null && current != Any::class.java) {
+            runCatching {
+                current.declaredMethods
+                    .filter { method ->
+                        method.returnType == Void.TYPE &&
+                            method.parameterTypes.size == 1 &&
+                            method.parameterTypes[0] == InputEvent::class.java
+                    }
+                    .forEach { candidates += it }
+            }
+            current = current.superclass
+        }
+        return candidates.firstOrNull { it.name == INPUT_METHOD_NAME } ?: candidates.firstOrNull()
+    }
+
+    /**
+     * 定位输入监视器。ColorOS 16 的 `mInputMonitorCompat` 自身声明 `forcePilferPointers`；
+     * ColorOS 17 移除了该类，触摸服务改为持有包装对象（如 `ab.i`），真正的
+     * `android.view.InputMonitor` 在其字段上，抢指针走 `pilferPointers()`。
+     * 解析失败不阻断入口 Hook：只跳过抢指针，角落手势仍由 SystemUI 热区接管。
+     */
+    private fun resolveInputMonitor(serviceClass: Class<*>) {
+        var current: Class<*>? = serviceClass
+        while (current != null && current != Any::class.java) {
+            val fields = runCatching { current.declaredFields }.getOrNull().orEmpty()
+            for (field in fields) {
+                pilferMethodOf(field.type)?.let { pilfer ->
+                    field.isAccessible = true
+                    inputMonitorField = field
+                    forcePilferPointersMethod = pilfer
+                    return
+                }
+                val monitorType = inputMonitorType ?: continue
+                val inner = runCatching { field.type.declaredFields }.getOrNull().orEmpty()
+                    .firstOrNull { it.type == monitorType }
+                    ?: continue
+                val pilfer = pilferMethodOf(monitorType) ?: continue
+                field.isAccessible = true
+                inner.isAccessible = true
+                inputMonitorField = field
+                inputMonitorInnerField = inner
+                forcePilferPointersMethod = pilfer
+                return
+            }
+            current = current.superclass
+        }
+    }
+
+    /** 沿类型层次查找抢指针方法；混淆包装类可能把实现放在父类上。 */
+    /** `android.view.InputMonitor` 是 @hide 类，不在公开 SDK 中，只能按名字解析。 */
+    private val inputMonitorType: Class<*>? by lazy {
+        runCatching { Class.forName(INPUT_MONITOR_CLASS) }.getOrNull()
+    }
+
+    private fun pilferMethodOf(type: Class<*>): Method? =
+        PILFER_METHOD_NAMES.firstNotNullOfOrNull { name ->
+            runCatching { type.getMethod(name) }.getOrNull()
+                ?.takeIf { it.parameterCount == 0 }
+                ?.apply { isAccessible = true }
+        }
 
     private fun shouldSuppress(owner: Context, event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
@@ -202,7 +269,8 @@ internal class LauncherHookInstaller(
 
     private fun forcePilferPointers(owner: Context) {
         try {
-            val monitor = inputMonitorField?.get(owner) ?: return
+            val holder = inputMonitorField?.get(owner) ?: return
+            val monitor = inputMonitorInnerField?.get(holder) ?: holder
             forcePilferPointersMethod?.invoke(monitor)
         } catch (exception: ReflectiveOperationException) {
             logPilferFailure(exception)
@@ -229,9 +297,8 @@ internal class LauncherHookInstaller(
         const val TAG = "FlymeFreeform"
         const val TOUCH_SERVICE_CLASS = "com.android.quickstep.OplusBaseTouchInteractionService"
         const val INPUT_METHOD_NAME = "onInputEventInternal"
-        const val INPUT_MONITOR_CLASS = "com.android.systemui.shared.system.InputMonitorCompat"
-        const val INPUT_MONITOR_FIELD = "mInputMonitorCompat"
-        const val FORCE_PILFER_METHOD = "forcePilferPointers"
+        const val INPUT_MONITOR_CLASS = "android.view.InputMonitor"
+        val PILFER_METHOD_NAMES = listOf("forcePilferPointers", "pilferPointers")
         const val CLAIM_LOG_INTERVAL_MS = 2_000L
         const val PILFER_FAILURE_LOG_INTERVAL_MS = 10_000L
     }

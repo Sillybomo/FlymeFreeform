@@ -148,7 +148,10 @@ internal class OutsideTapCloseHookInstaller(
         private val flexibleTasksField = controllerClass.requiredField("mFlexibleTasks")
         private val captionTaskField = captionClass.requiredField("mTask")
         private val captionControllerField = captionClass.requiredField("mFlexibleTaskController")
-        private val inputMethodWindowField = displayContentClass.requiredField("mInputMethodWindow")
+        // ColorOS 17 起 DisplayContent 的输入法窗口字段由 mInputMethodWindow 更名为 mImeWindow。
+        private val inputMethodWindowField =
+            displayContentClass.optionalField("mImeWindow")
+                ?: displayContentClass.requiredField("mInputMethodWindow")
         private val updateCaptionTouchRegion = captionClass.requiredMethod("updateTouchRegion", 0)
         private val getTopZoomTask = controllerClass.requiredMethod("getTopZoomTask", 0)
         private val isCanRespondEvent = controllerClass.requiredMethod("isCanRespondEvent", 0)
@@ -560,6 +563,14 @@ private data class ProtectedTouchableRegion(
     val task: Any,
     val region: Region,
 )
+
+/** 与 requiredField 相同的层次查找，但字段缺失时返回 null，便于兼容改名。 */
+private fun Class<*>.optionalField(name: String): Field? =
+    try {
+        requiredField(name)
+    } catch (_: NoSuchFieldException) {
+        null
+    }
 
 private fun Class<*>.requiredField(name: String): Field {
     var current: Class<*>? = this
