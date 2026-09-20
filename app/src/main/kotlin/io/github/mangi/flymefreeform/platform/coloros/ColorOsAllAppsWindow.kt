@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.PixelFormat
 import android.os.SystemClock
+import android.provider.Settings
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -17,6 +18,7 @@ import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import io.github.mangi.flymefreeform.window.AllAppsPanelGeometry
 import io.github.mangi.flymefreeform.window.AllAppsPanelMotion
+import java.lang.reflect.Method
 
 /** 独立窗口只承载本次新建的全部内容；不挂接原侧栏父视图，也不改变其状态机。 */
 internal class ColorOsAllAppsWindow(
@@ -42,6 +44,21 @@ internal class ColorOsAllAppsWindow(
     private val mode = content.mode()
     private val leftSide = content.leftSide()
     private var insets: WindowInsets? = null
+    private var displayWidth = 0
+    private var displayHeight = 0
+    private var displaySafe = IntArray(4)
+    private var windowParams: WindowManager.LayoutParams? = null
+
+    /** `FLAG_BLUR_BEHIND` 与 `setBlurBehindRadius` 未在公开 SDK 导出，按名字反射获取。 */
+    private val blurBehindFlag: Int? =
+        runCatching {
+            WindowManager.LayoutParams::class.java.getField("FLAG_BLUR_BEHIND").getInt(null)
+        }.getOrNull()
+    private val blurRadiusSetter: Method? =
+        runCatching {
+            WindowManager.LayoutParams::class.java
+                .getMethod("setBlurBehindRadius", Int::class.javaPrimitiveType)
+        }.getOrNull()
     private var backDispatcher: OnBackInvokedDispatcher? = null
     private val backCallback = OnBackInvokedCallback { back() }
     private val animation = Runnable { animateFrame() }
@@ -92,16 +109,38 @@ internal class ColorOsAllAppsWindow(
         content.view.alpha = 0f
         card.isClickable = true
         val metrics = manager.currentWindowMetrics
-        val safe = metrics.windowInsets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+        displayWidth = metrics.bounds.width()
+        displayHeight = metrics.bounds.height()
+        val safe =
+            metrics.windowInsets.getInsets(
+                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
+            )
+        displaySafe = intArrayOf(safe.left, safe.top, safe.right, safe.bottom)
         val initial = AllAppsPanelGeometry.calculate(
-            metrics.bounds.width(), metrics.bounds.height(), dimensions, mode, leftSide,
+            displayWidth, displayHeight, dimensions, mode, leftSide,
             safe.left, safe.top, safe.right, safe.bottom,
         )
-        root.addView(card, FrameLayout.LayoutParams(initial.width, initial.height).apply {
-            leftMargin = initial.left
-            topMargin = initial.top
-            gravity = Gravity.TOP or Gravity.LEFT
-        })
+        // 窗口收缩成面板大小：窗口模糊才会只作用于面板背后，而不是整屏。
+        // 面板入场/退场缩放范围为 0.3~1.0，不会超出窗口被裁切。
+        windowParams = WindowManager.LayoutParams(
+            initial.width, initial.height, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = initial.left
+            y = initial.top
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+            setFitInsetsTypes(0)
+            title = "FlymeFreeformAllApps"
+            blurBehindFlag?.let { flags = flags or it }
+            blurRadiusSetter?.let { setter ->
+                runCatching { setter.invoke(this, tunedInt(BLUR_RADIUS_KEY, BLUR_BEHIND_RADIUS_PX)) }
+            }
+        }
+        root.addView(card, FrameLayout.LayoutParams(-1, -1))
         root.setOnTouchListener { _, event ->
             if (event.actionMasked == MotionEvent.ACTION_UP) dismiss()
             true
@@ -116,17 +155,7 @@ internal class ColorOsAllAppsWindow(
 
     fun show() {
         check(!attached && !closed)
-        val params = WindowManager.LayoutParams(
-            -1, -1, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
-            setFitInsetsTypes(0)
-            title = "FlymeFreeformAllApps"
-        }
+        val params = windowParams ?: error("ALL_APPS_WINDOW_PARAMS_UNAVAILABLE")
         manager.addView(root, params)
         attached = true
         root.viewTreeObserver.addOnPreDrawListener(firstFrame)
@@ -138,11 +167,13 @@ internal class ColorOsAllAppsWindow(
         if (closed) return true
         if (!waitingForFirstFrame) return true
         return try {
-            val layout = card.layoutParams as FrameLayout.LayoutParams
+            // 卡片填满窗口，尺寸与窗口一致；不能再拿 layoutParams 比较（那是 MATCH_PARENT = -1）。
             if (root.width <= 0 || root.height <= 0 || insets == null ||
-                card.isLayoutRequested || card.width != layout.width || card.height != layout.height ||
-                card.left != layout.leftMargin || card.top != layout.topMargin || !content.attachBlur()
+                card.isLayoutRequested || card.width != root.width || card.height != root.height ||
+                !content.attachBlur()
             ) return false
+            // 平台背景模糊已生效时关闭窗口级模糊，避免双重模糊与额外开销。
+            if (content.platformGlass) disableWindowBlur()
             card.pivotX = card.width / 2f
             card.pivotY = card.height / 2f
             val initial = AllAppsPanelMotion.enter(0f)
@@ -216,24 +247,36 @@ internal class ColorOsAllAppsWindow(
         if (!exiting && !content.leaveSearch()) dismiss()
     }
 
+    /** 窗口本身即面板，尺寸/位置直接写在窗口参数上；卡片始终填满窗口。 */
     private fun placeCard() {
-        if (closed || root.width <= 0 || root.height <= 0) return
-        val safe = insets?.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+        if (closed || displayWidth <= 0 || displayHeight <= 0) return
         val ime = insets?.getInsets(WindowInsets.Type.ime())?.bottom ?: 0
         val bounds = AllAppsPanelGeometry.calculate(
-            root.width, root.height, dimensions, mode, leftSide,
-            safe?.left ?: 0, safe?.top ?: 0, safe?.right ?: 0, maxOf(safe?.bottom ?: 0, ime),
+            displayWidth, displayHeight, dimensions, mode, leftSide,
+            displaySafe[0], displaySafe[1], displaySafe[2], maxOf(displaySafe[3], ime),
         )
-        val params = card.layoutParams as FrameLayout.LayoutParams
+        val params = windowParams ?: return
         if (params.width == bounds.width && params.height == bounds.height &&
-            params.leftMargin == bounds.left && params.topMargin == bounds.top
+            params.x == bounds.left && params.y == bounds.top
         ) return
         params.width = bounds.width
         params.height = bounds.height
-        params.leftMargin = bounds.left
-        params.topMargin = bounds.top
-        params.gravity = Gravity.TOP or Gravity.LEFT
-        card.layoutParams = params
+        params.x = bounds.left
+        params.y = bounds.top
+        if (attached) manager.updateViewLayout(root, params)
+    }
+
+    private var windowBlurDisabled = false
+
+    /** 平台玻璃接管后，清掉窗口参数里的 BLUR_BEHIND 标志并立即生效（只执行一次）。 */
+    private fun disableWindowBlur() {
+        if (windowBlurDisabled) return
+        windowBlurDisabled = true
+        val flag = blurBehindFlag ?: return
+        val params = windowParams ?: return
+        if (params.flags and flag == 0) return
+        params.flags = params.flags and flag.inv()
+        if (attached) runCatching { manager.updateViewLayout(root, params) }
     }
 
     private fun startAnimation() {
@@ -318,5 +361,20 @@ internal class ColorOsAllAppsWindow(
             onFailure(exception)
             dispose()
         }
+    }
+
+    /**
+     * 读调参覆盖值。改 `Settings.Global` 后下次打开面板即生效，无需重编译或重启：
+     * `adb shell settings put global flymefreeform_blur_radius 200`
+     */
+    private fun tunedInt(key: String, fallback: Int): Int =
+        runCatching {
+            Settings.Global.getInt(context.contentResolver, key, fallback)
+        }.getOrDefault(fallback)
+
+    private companion object {
+        /** 窗口模糊回退路径的模糊半径（像素）默认值；对齐原生 integer/edit_panel_platform_blur_radius=300。 */
+        const val BLUR_BEHIND_RADIUS_PX = 300
+        const val BLUR_RADIUS_KEY = "flymefreeform_blur_radius"
     }
 }
