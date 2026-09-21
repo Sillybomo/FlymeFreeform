@@ -20,8 +20,11 @@ internal object RadialIconGeometry {
      */
     private const val MIN_ICON_DIAMETER_DP = 30f
 
-    /** 内圈图标基准直径（dp）；同时受内圈弦长与两圈径向间隙约束。 */
-    private const val INNER_ICON_DIAMETER_DP = 42f
+    /**
+     * 内圈与外圈图标之间的径向间隙（dp，按图标边缘到边缘计）。
+     * 间隙过小两圈视觉粘连、滑选跨圈歧义；过大则内圈过度贴近角落。
+     */
+    private const val RING_GAP_DP = 12f
 
     fun fit(
         width: Float,
@@ -55,17 +58,21 @@ internal object RadialIconGeometry {
         val fitScale = minOf(1f, safeWidth / requestedExtent, safeHeight / requestedExtent)
         val unit = pixelsPerBaseDp * fitScale
         val diameter = diameterDp * unit
-        // 内圈：半径 = 外圈半径 − 两圈图标半径与留白；直径取"内圈弦长约束"与"径向间隙约束"的较小者。
-        // 42dp 是内圈图标的基准值（径向间隙恰好卡满），再大会与外圈图标相切。
+        // 内圈：图标与外圈同尺寸（不缩小），半径 = 外圈半径 − 两圈图标半径和 − 间隙；
+        // 外圈完全不动，只把内圈整体内移。内圈唯一收紧手段是自身相邻弦长
+        // （内圈条目数增多时弦长变短，先按等大假设估算半径，一轮近似即可）。
         var innerRadius = 0f
         var innerDiameter = 0f
         if (innerCount > 0) {
+            val innerSlotDegrees = SPAN_DEGREES / innerCount
+            val innerChordDp =
+                2f * (BASE_RADIUS_DP - diameterDp - RING_GAP_DP) *
+                    sin(innerSlotDegrees / 2f * PI.toFloat() / 180f) * 0.995f
             val innerDiameterDp =
-                INNER_ICON_DIAMETER_DP.coerceAtMost(
-                    2f * (BASE_RADIUS_DP - (diameterDp + INNER_ICON_DIAMETER_DP) / 2f - BASE_ITEM_PADDING_DP) -
-                        diameterDp,
+                diameterDp.coerceAtMost(
+                    (innerChordDp - BASE_ITEM_PADDING_DP).coerceAtLeast(MIN_ICON_DIAMETER_DP),
                 )
-            innerRadius = (BASE_RADIUS_DP - (diameterDp + innerDiameterDp) / 2f - BASE_ITEM_PADDING_DP) * unit
+            innerRadius = (BASE_RADIUS_DP - (diameterDp + innerDiameterDp) / 2f - RING_GAP_DP) * unit
             innerDiameter = innerDiameterDp * unit
         }
         return RadialVisualMetrics(

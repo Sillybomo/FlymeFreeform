@@ -42,6 +42,8 @@ internal class ColorOsAllAppsEndpoint(
     /** 工具目录与执行器；只在侧边栏进程可用（工具是侧边栏内部的 AbsTool 处理器）。 */
     private val toolCatalog by lazy { ColorOsToolCatalog(service, loader, log) }
     private var toolCatalogPublished = false
+    /** [encodedToolCatalog] 的缓存；目录可能随侧边栏版本更新变化，进程内视为不变。 */
+    private var encodedToolCatalogCache: String? = null
     private var request: Request? = null
     private var lastResult: Pair<String, Int>? = null
     private var disposed = false
@@ -107,6 +109,21 @@ internal class ColorOsAllAppsEndpoint(
         } catch (exception: Exception) {
             log(Log.WARN, "TOOL_CATALOG_PUBLISH_FAILED", exception)
         }
+    }
+
+    /**
+     * 目录编码文本缓存：枚举 22 个工具 + 逐枚 PNG 编码开销不小，
+     * RUN_TOOL 补传等高频路径直接复用，首次调用时构建。
+     *
+     * @return 编码文本；目录为空（反射全失败）时返回 null
+     */
+    private fun encodedToolCatalog(): String? {
+        encodedToolCatalogCache?.let { return it }
+        val records = toolCatalog.build()
+        if (records.isEmpty()) return null
+        val encoded = ToolCatalogCodec.encode(records)
+        encodedToolCatalogCache = encoded
+        return encoded
     }
 
     fun onUnbound(id: String?) {
@@ -178,6 +195,15 @@ internal class ColorOsAllAppsEndpoint(
                 val clickX = data.getFloat(SidebarProtocol.TOOL_CLICK_X, 0f)
                 val clickY = data.getFloat(SidebarProtocol.TOOL_CLICK_Y, 0f)
                 if (!toolCatalog.run(alias!!, clickX, clickY)) log(Log.WARN, "TOOL_NOT_RUNNABLE $alias", null)
+                // 免会话通道顺带把目录回传给 system_server：开机时它拉目录可能赶在
+                // 侧边栏就绪前失败（SIDEBAR_TOOL_TARGET_UNAVAILABLE），这里是可靠的补传点。
+                val replyTo = message.replyTo
+                if (replyTo != null) {
+                    val encoded = encodedToolCatalog()
+                    if (encoded != null) {
+                        runCatching { replyTo.send(SidebarProtocol.catalogMessage(encoded, Process.myUid())) }
+                    }
+                }
                 publishToolCatalog()
                 return@safely
             }

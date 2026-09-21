@@ -52,7 +52,7 @@ internal class ColorOsToolCatalog(
     /** alias → 原厂 EntryBean 缓存；执行时优先走 startSysTool 原厂路径。 */
     private val entryBeansByAlias = mutableMapOf<String, Any>()
 
-    /** 把原厂工具条目列表按别名建立索引（工具条目的 activity 字段即别名）。 */
+    /** 把原厂工具条目列表按别名建立索引（工具条目的 activity 字段恒为空串，alias 才是工具别名）。 */
     private fun cacheEntryBeans() {
         try {
             val helperClass = loader.loadClass(ENTRY_HELPER_CLASS)
@@ -63,7 +63,7 @@ internal class ColorOsToolCatalog(
                         ?: return@forEach
                 list.filterNotNull().forEach { bean ->
                     runCatching {
-                        val alias = bean.javaClass.getMethod("getActivity").invoke(bean) as? String
+                        val alias = bean.javaClass.getMethod("getAlias").invoke(bean) as? String
                         if (!alias.isNullOrEmpty()) entryBeansByAlias[alias] = bean
                     }
                 }
@@ -121,7 +121,7 @@ internal class ColorOsToolCatalog(
         }
     }
 
-    /** 在原厂工具条目列表里按别名找 EntryBean（工具条目的 activity 字段即别名）。 */
+    /** 在原厂工具条目列表里按别名找 EntryBean（工具条目的 activity 字段恒为空串，alias 才是工具别名）。 */
     private fun findToolBean(instance: Any, alias: String): Any? =
         try {
             val helperClass = loader.loadClass(ENTRY_HELPER_CLASS)
@@ -135,7 +135,7 @@ internal class ColorOsToolCatalog(
                 .filterNotNull()
                 .firstOrNull { bean ->
                     runCatching {
-                        bean.javaClass.getMethod("getActivity").invoke(bean) == alias ||
+                        bean.javaClass.getMethod("getAlias").invoke(bean) == alias ||
                             bean.javaClass.getMethod("getIntentString").invoke(bean) == alias
                     }.getOrDefault(false)
                 }
@@ -196,14 +196,27 @@ internal class ColorOsToolCatalog(
             null
         }
 
-    /** 优先用工具自带图标资源，缺失时回退到它依赖的应用图标；再失败则不带图标。 */
+    /**
+     * 优先用工具自带图标资源，缺失时回退到它依赖的应用图标；再失败则不带图标。
+     * 任一环节失败都打诊断码（此前 runCatching 静默，目录曾出现 22 条全无图标且无线索）。
+     */
     private fun loadIcon(tool: Any, type: Class<*>): ByteArray? {
         val drawable =
             runCatching {
                 val iconRes = type.getMethod("getIconRes").invoke(tool) as? Int ?: 0
                 if (iconRes != 0) context.resources.getDrawable(iconRes, context.theme) else null
+            }.recoverCatching { exception ->
+                log(Log.WARN, "TOOL_ICON_RES_FAILED ${type.simpleName}", unwrap(exception))
+                null
             }.getOrNull() ?: fallbackIcon(tool, type)
-        return drawable?.let(::encodePng)
+        if (drawable == null) {
+            log(Log.WARN, "TOOL_ICON_LOAD_FAILED ${type.simpleName}", null)
+            return null
+        }
+        return encodePng(drawable) ?: run {
+            log(Log.WARN, "TOOL_ICON_ENCODE_FAILED ${type.simpleName}", null)
+            null
+        }
     }
 
     private fun fallbackIcon(tool: Any, type: Class<*>): Drawable? =

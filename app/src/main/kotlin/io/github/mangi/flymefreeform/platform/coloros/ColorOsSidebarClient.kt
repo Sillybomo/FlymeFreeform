@@ -40,6 +40,20 @@ internal class ColorOsSidebarClient(
 ) {
     enum class Outcome { Shown, Fallback, Abandoned }
 
+    /**
+     * 免会话绑定（目录请求 / 工具执行）使用的 bind 标志：
+     * AUTO_CREATE 拉起侧边栏进程，ALLOW_FOREGROUND_SERVICE_STARTS 授予它在绑定期间
+     * 启动前台服务的许可（扇形触发工具时侧边栏处于后台，识屏等工具内部
+     * startForegroundService 会被 Android 12+ 的后台 FGS 限制拒绝且异常被原厂吞掉）。
+     */
+    private val TOOL_BIND_FLAGS =
+        Context.BIND_AUTO_CREATE or Context.BIND_ALLOW_FOREGROUND_SERVICE_STARTS
+
+    /** 开机目录拉取失败的重试上限与间隔：覆盖侧边栏冷启动窗口（实测约 30 秒内就绪）。 */
+    private val CATALOG_RETRY_LIMIT = 3
+
+    private val CATALOG_RETRY_INTERVAL_MS = 15_000L
+
     private val worker =
         ThreadPoolExecutor(
             1, 1, 10L, TimeUnit.SECONDS, ArrayBlockingQueue(4),
@@ -108,8 +122,13 @@ internal class ColorOsSidebarClient(
     /**
      * 开机向侧边栏索要工具目录：回包经 [reply]（类级 Messenger）走
      * TOOL_CATALOG_PAYLOAD 分支 → onToolCatalog → 写 Settings.Global。
+     *
+     * 开机瞬间调用会赶在侧边栏就绪前（实测 SIDEBAR_TOOL_TARGET_UNAVAILABLE），
+     * 因此失败后按 [CATALOG_RETRY_INTERVAL_MS] 间隔重试 [CATALOG_RETRY_LIMIT] 次。
+     *
+     * @param retry 已重试次数；外部调用保持默认 0
      */
-    fun requestToolCatalog() {
+    fun requestToolCatalog(retry: Int = 0) {
         try {
             worker.execute {
                 try {
@@ -119,10 +138,11 @@ internal class ColorOsSidebarClient(
                         Context::class.java.getMethod("createContextAsUser", UserHandle::class.java, Int::class.javaPrimitiveType)
                             .invoke(context, user, 0) as Context
                     val uid = ColorOsSidebarTarget.supportedUid(userContext)
-                    ?: run {
-                        logFailure("SIDEBAR_TOOL_TARGET_UNAVAILABLE")
-                        return@execute
-                    }
+                        ?: run {
+                            logFailure("SIDEBAR_TOOL_TARGET_UNAVAILABLE")
+                            scheduleCatalogRetry(retry)
+                            return@execute
+                        }
                     val connection =
                         object : ServiceConnection {
                             override fun onServiceConnected(name: ComponentName, service: IBinder) {
@@ -148,18 +168,26 @@ internal class ColorOsSidebarClient(
                         }
                     val intent = Intent(ColorOsSidebarTarget.BIND_ACTION).setComponent(COMPONENT)
                     val bound =
-                        userContext.bindService(intent, Context.BIND_AUTO_CREATE, { task -> handler.post(task) }, connection)
+                        userContext.bindService(intent, TOOL_BIND_FLAGS, { task -> handler.post(task) }, connection)
                     if (!bound) {
                         logFailure("SIDEBAR_CATALOG_BIND_FAILED")
                         runCatching { userContext.unbindService(connection) }
+                        scheduleCatalogRetry(retry)
                     }
                 } catch (exception: Exception) {
                     logFailure("SIDEBAR_CATALOG_REQUEST_FAILED", exception)
+                    scheduleCatalogRetry(retry)
                 }
             }
         } catch (exception: RuntimeException) {
             logFailure("SIDEBAR_TOOL_QUEUE_FULL", exception)
         }
+    }
+
+    /** 目录拉取失败后的定时重试；超过上限放弃（面板打开/RUN_TOOL 时还有补传点）。 */
+    private fun scheduleCatalogRetry(retry: Int) {
+        if (retry >= CATALOG_RETRY_LIMIT) return
+        handler.postDelayed({ requestToolCatalog(retry + 1) }, CATALOG_RETRY_INTERVAL_MS)
     }
 
     private fun sendToolRequest(alias: String, clickX: Float, clickY: Float) {
@@ -189,8 +217,7 @@ internal class ColorOsSidebarClient(
                     override fun onServiceDisconnected(name: ComponentName) = Unit
                 }
             val intent = Intent(ColorOsSidebarTarget.BIND_ACTION).setComponent(COMPONENT)
-            val bound =
-                userContext.bindService(intent, Context.BIND_AUTO_CREATE, { task -> handler.post(task) }, connection)
+            val bound = userContext.bindService(intent, TOOL_BIND_FLAGS, { task -> handler.post(task) }, connection)
             if (!bound) {
                 logFailure("SIDEBAR_TOOL_BIND_FAILED")
                 runCatching { userContext.unbindService(connection) }
@@ -263,9 +290,13 @@ internal class ColorOsSidebarClient(
             if (component != null) handler.post { onLaunchComponent?.invoke(component) }
             return true
         }
-        // 目录载荷与会话无关（侧边栏在面板打开时发布），因此先于会话校验处理。
+        // 目录载荷与会话无关（侧边栏在面板打开时发布），因此先于会话校验处理；
+        // 发送方必须与载荷中自报的 TARGET_UID（侧边栏 uid）一致，防止任意进程伪造目录。
         if (message.what == SidebarProtocol.TOOL_CATALOG_PAYLOAD && message.arg1 == SidebarProtocol.VERSION) {
-            val text = message.peekData()?.getString(SidebarProtocol.TOOL_CATALOG_TEXT)
+            val data = message.peekData()
+            val expectedUid = data?.getInt(SidebarProtocol.TARGET_UID, -1) ?: -1
+            if (message.sendingUid != expectedUid) return true
+            val text = data?.getString(SidebarProtocol.TOOL_CATALOG_TEXT)
             if (!text.isNullOrEmpty()) handler.post { onToolCatalog?.invoke(text) }
             return true
         }
