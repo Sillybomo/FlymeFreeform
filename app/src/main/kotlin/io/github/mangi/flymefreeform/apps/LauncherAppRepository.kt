@@ -126,7 +126,7 @@ internal class LauncherAppRepository(
                 // system_server 收到请求后写 Settings.Global，这里延迟重读两次把目录捡回来。
                 val handler = android.os.Handler(android.os.Looper.getMainLooper())
                 for (delay in longArrayOf(600L, 1_800L)) {
-                    handler.postDelayed({ worker.execute { publish() }, delay)
+                    handler.postDelayed({ worker.execute { publish() } }, delay)
                 }
             }
         }
