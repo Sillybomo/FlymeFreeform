@@ -2,7 +2,10 @@ package io.github.mangi.flymefreeform.config
 
 /** 不依赖 Android 运行时的协议文本规范化，供配置迁移与 JVM 测试共用。 */
 internal object PinnedComponentCodec {
-    fun decodeRaw(value: String): List<String> =
+    fun decodeRaw(
+        value: String,
+        limit: Int = ModulePreferences.MAX_PINNED_APPS,
+    ): List<String> =
         value
             .lineSequence()
             .map(String::trim)
@@ -11,6 +14,6 @@ internal object PinnedComponentCodec {
                 separator > 0 && separator < flattened.lastIndex
             }
             .distinct()
-            .take(ModulePreferences.MAX_PINNED_APPS)
+            .take(limit)
             .toList()
 }

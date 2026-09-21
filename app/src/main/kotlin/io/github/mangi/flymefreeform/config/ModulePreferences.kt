@@ -12,6 +12,9 @@ internal object ModulePreferences {
     const val KEY_HANDLE_SWIPE_UP_TO_MINI_ENABLED = "handle_swipe_up_to_mini_enabled"
     const val KEY_PAUSE_IN_LANDSCAPE = "pause_in_landscape"
     const val KEY_PAUSE_IN_GAME_MODE = "pause_in_game_mode"
+
+    /** 最近以小窗打开的应用（system_server 写入，侧边栏进程读取后渲染「最近小窗」区块）。 */
+    const val KEY_RECENT_FREEFORM = "recent_freeform_v1"
     const val DEFAULT_ENABLED = false
     const val DEFAULT_CORNER_ENABLED = true
     const val DEFAULT_CORNER_TRIGGER_RANGE_DP = 84
@@ -21,7 +24,16 @@ internal object ModulePreferences {
     const val DEFAULT_PAUSE_IN_GAME_MODE = true
     const val MIN_CORNER_TRIGGER_RANGE_DP = 24
     const val MAX_CORNER_TRIGGER_RANGE_DP = 160
-    const val MAX_PINNED_APPS = 6
+
+    /**
+     * 扇形最多固定几个应用（不含「更多」）。
+     * 9 个 + 「更多」= 10 个槽位，此时槽位角 8.4°、弦长 34.6dp，
+     * 图标按弦长收紧到约 33dp —— 已是可点选的下限，再加会明显互叠。
+     */
+    const val MAX_PINNED_APPS = 9
+
+    /** 「最近小窗」区块最多展示几个最近应用；超出按时间截断（最近的在最左）。 */
+    const val MAX_RECENT_FREEFORM = 8
 
     fun coerceCornerTriggerRangeDp(value: Int): Int =
         value.coerceIn(MIN_CORNER_TRIGGER_RANGE_DP, MAX_CORNER_TRIGGER_RANGE_DP)

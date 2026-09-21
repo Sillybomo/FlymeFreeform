@@ -389,7 +389,7 @@ internal class ColorOsFreeformCoordinator(
     private fun launchCommittedApp(entry: RadialAppEntry) {
         if (!isGestureEnvironmentAllowed()) return
         when (val result = launcher.launch(entry.component)) {
-            FreeformLaunchResult.Started -> Unit
+            FreeformLaunchResult.Started -> configuration.recordRecentFreeform(entry.component)
             FreeformLaunchResult.TargetUnavailable ->
                 logger(Log.WARN, "FREEFORM_LAUNCH_TARGET_UNAVAILABLE", null)
             is FreeformLaunchResult.Failed ->

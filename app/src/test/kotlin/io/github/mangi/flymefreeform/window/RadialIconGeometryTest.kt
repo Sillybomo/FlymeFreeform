@@ -8,6 +8,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RadialIconGeometryTest {
+    /** 9 个固定应用 + 「更多」= 10 个槽位，是当前设计上限。 */
+    private val maxSlots = 10
+
     private fun fit(width: Float = 400f, height: Float = 890f, density: Float = 1f,
                     insets: OverlaySafeInsets = OverlaySafeInsets(), count: Int = 7) =
         RadialIconGeometry.fit(width, height, density, insets, count)
@@ -66,10 +69,25 @@ class RadialIconGeometryTest {
     }
 
     @Test
+    fun crowdedSlotsShrinkIconsAndKeepRadius() {
+        val crowded = fit(count = maxSlots)
+        // 半径不变，只有图标按弦长收紧：这是"多放几个"而不改扇形外缘的前提。
+        assertEquals(236f, crowded.radius, 0.001f)
+        assertTrue(crowded.iconDiameter < fit(count = 7).iconDiameter)
+        assertTrue(crowded.iconDiameter >= 30f)
+        var previous = Float.MAX_VALUE
+        for (count in 7..maxSlots) {
+            val current = fit(count = count).iconDiameter
+            assertTrue(current <= previous)
+            previous = current
+        }
+    }
+
+    @Test
     fun selectionRingsStayInsideBothSafeCornersAndDoNotOverlap() {
         for ((width, height) in listOf(160f to 300f, 400f to 890f, 890f to 400f, 840f to 1100f)) {
             for (insets in listOf(OverlaySafeInsets(), OverlaySafeInsets(30f, 70f, 90f, 120f))) {
-                for (count in 1..7) {
+                for (count in 1..maxSlots) {
                     val metrics = fit(width, height, insets = insets, count = count)
                     val selectedRadius = metrics.iconDiameter / 2f
                     val padding = metrics.itemPadding
@@ -84,7 +102,8 @@ class RadialIconGeometryTest {
                             assertTrue(center.y - extent >= insets.top - 0.001f)
                             assertTrue(center.y + extent <= height - insets.bottom + 0.001f)
                             layout.itemCenters.drop(index + 1).forEach { other ->
-                                assertTrue(hypot(center.x - other.x, center.y - other.y) >=
+                                // 0.01dp 容差：弦长由 sin 反推，取等时应视为不重叠。
+                                assertTrue(hypot(center.x - other.x, center.y - other.y) + 0.01f >=
                                     selectedRadius + padding + metrics.iconDiameter / 2f)
                             }
                         }

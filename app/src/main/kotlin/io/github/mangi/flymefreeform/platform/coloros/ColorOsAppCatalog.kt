@@ -10,6 +10,7 @@ import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Process
+import android.util.Log
 import io.github.mangi.flymefreeform.apps.AppSelectionPolicy
 import io.github.mangi.flymefreeform.config.ModuleSettingsSnapshot
 import java.text.Collator
@@ -37,7 +38,7 @@ internal data class AppCatalogSnapshot(
 internal class ColorOsAppCatalog(
     private val context: Context,
     private val executor: Executor,
-    logger: (Int, String, Throwable?) -> Unit,
+    private val logger: (Int, String, Throwable?) -> Unit,
     private val publish: (AppCatalogSnapshot) -> Unit,
 ) {
     private val iconRenderer = ColorOsRadialIconRenderer(context.resources, logger)
@@ -97,10 +98,11 @@ internal class ColorOsAppCatalog(
             entries.sortedWith { first, second ->
                 collator.compare(first.label, second.label)
             }
+        val byPackage = entries.groupBy { entry -> entry.component.packageName }
         val radial =
             AppSelectionPolicy.radialItems(
                 pinsSaved = settings.pinsSaved,
-                availablePins = settings.pinnedComponents.mapNotNull(byComponent::get),
+                availablePins = resolvePins(settings.pinnedComponents, byComponent, byPackage),
                 recent = recents,
                 all = alphabetical,
                 identity = RadialAppEntry::component,
@@ -134,6 +136,32 @@ internal class ColorOsAppCatalog(
         val panelApps: List<RadialAppEntry>,
         val radialSources: Map<ComponentName, Drawable>,
     )
+
+    /**
+     * 固定项按组件精确匹配；ColorOS 的启动组件会随应用更新或别名变化漂移，
+     * 因此退化为「同包唯一启动项」兜底，仍无法解析则打诊断码 —— 避免"设置里加了、扇形里看不到"却无线索。
+     */
+    private fun resolvePins(
+        pins: List<ComponentName>,
+        byComponent: Map<ComponentName, RadialAppEntry>,
+        byPackage: Map<String, List<RadialAppEntry>>,
+    ): List<RadialAppEntry> =
+        pins.mapNotNull { pin ->
+            byComponent[pin]?.let { return@mapNotNull it }
+            val samePackage = byPackage[pin.packageName]
+            val remapped = samePackage?.takeIf { it.size == 1 }?.first()
+            if (remapped != null) {
+                logger(
+                    Log.INFO,
+                    "PINNED_APP_COMPONENT_REMAPPED ${pin.packageName} -> ${remapped.component.className}",
+                    null,
+                )
+                remapped
+            } else {
+                logger(Log.WARN, "PINNED_APP_UNRESOLVED ${pin.flattenToString()}", null)
+                null
+            }
+        }
 
     private fun recentComponents(): List<ComponentName> {
         val activityManager = context.getSystemService(ActivityManager::class.java) ?: return emptyList()

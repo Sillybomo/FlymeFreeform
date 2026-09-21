@@ -216,7 +216,11 @@ internal class ColorOsAllAppsEndpoint(
         watchingPackages = true
         service.registerComponentCallbacks(components)
         watchingConfiguration = true
-        next.content = ColorOsAllAppsContent(loader)
+        next.content = ColorOsAllAppsContent(
+            loader,
+            recentFreeform = { configuration.readRecentFreeform() },
+            log = log,
+        )
         advance()
     }
 

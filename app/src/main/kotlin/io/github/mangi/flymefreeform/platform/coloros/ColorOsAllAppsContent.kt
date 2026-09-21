@@ -1,5 +1,6 @@
 package io.github.mangi.flymefreeform.platform.coloros
 
+import android.content.ComponentName
 import android.content.Context
 import android.os.Build
 import android.os.IInterface
@@ -15,7 +16,15 @@ import java.lang.reflect.Method
 import java.lang.reflect.Proxy
 
 /** 仅适配已核对的 ColorOS 16.14.6 与 ColorOS 17.9.2；独立创建内容视图，不调用侧栏展开、点击全部或修改原生面板状态。 */
-internal class ColorOsAllAppsContent(loader: ClassLoader) {
+internal class ColorOsAllAppsContent(
+    loader: ClassLoader,
+    /**
+     * 「最近小窗」区块的数据源（system_server 侧写入远端配置）。
+     * 仅在构造与首帧各读一次；无数据时不插入区块，保持原厂面板外观不变。
+     */
+    private val recentFreeform: () -> List<ComponentName> = { emptyList() },
+    private val log: (Int, String, Throwable?) -> Unit = { _, _, _ -> },
+) {
     private val allClass = loader.loadClass(ALL_CLASS)
     private val searchClass = loader.loadClass(SEARCH_CLASS)
     private val mainClass = loader.loadClass(MAIN_CLASS)
@@ -53,6 +62,11 @@ internal class ColorOsAllAppsContent(loader: ClassLoader) {
     // Service 使用平台默认主题；原厂内容依赖 App 的配置/主题包装，不能直接传 Service。
     private val context = themedContext(loader)
     private val colorOs17 = Build.VERSION.SDK_INT >= 37
+
+    /** 「最近小窗」区块：自绘视图插到原厂 `app_list` 之前，不触碰原厂适配器。 */
+    private val recentSection = ColorOsRecentSection(context, loader, log)
+    private var recentAttached = false
+    private var closeAction: (() -> Unit)? = null
 
     // ColorOS 16 的这些类仍保留旧版混淆接口；ColorOS 17 已改为独立的 BlurUtil/SidebarPlatformBlurHelper，
     // 本版本不再强行调用旧混淆方法，避免“全部”面板因视觉辅助类漂移而整体初始化失败。
@@ -111,6 +125,24 @@ internal class ColorOsAllAppsContent(loader: ClassLoader) {
         require(FrameLayout::class.java.isAssignableFrom(cardClass))
         require(getRouter.returnType.name == ROUTER_CLASS)
         allClass.getMethod("showAllPanel", Boolean::class.javaPrimitiveType).call(view, leftSide())
+        tryAttachRecents()
+    }
+
+    /**
+     * 插入「最近小窗」区块。构造期布局可能尚未完成（`app_list` 未就绪），
+     * 因此首帧再试一次；已插入或确无数据后不再重试。
+     */
+    private fun tryAttachRecents() {
+        if (recentAttached) return
+        val recents = runCatching { recentFreeform() }.getOrDefault(emptyList())
+        if (recents.isEmpty()) return
+        recentAttached =
+            try {
+                recentSection.attach(view, recents) { closeAction?.invoke() }
+            } catch (exception: Exception) {
+                log(Log.WARN, "RECENT_SECTION_UNAVAILABLE", exception)
+                false
+            }
     }
 
     fun ready(): Boolean = view.childCount > 0 && getMain.call(handler) != null &&
@@ -134,6 +166,8 @@ internal class ColorOsAllAppsContent(loader: ClassLoader) {
 
     fun bindClose(action: () -> Unit) {
         if (closed) return
+        // @author bomo：给「最近小窗」区块复用同一个关闭动作，点击区块条目后与原厂条目同样收起面板。
+        closeAction = action
         // @author bomo：ColorOS 17 的标题栏里「关闭」按钮 id 由 close 改成了 cancel。
         // 实测 view 树：title_layout > COUIToolbar(all_app_toolbar) > COUIActionMenuView
         // > COUIActionMenuItemView id=cancel。旧实现按 id/close 查找必然落空，
@@ -266,6 +300,8 @@ internal class ColorOsAllAppsContent(loader: ClassLoader) {
 
     /** 新增背景 View 后必须先完成一次布局，再让厂商模糊管理器读取其窗口坐标。 */
     fun attachBlur(): Boolean {
+        // @author bomo：首帧时布局已完成，构造期未插上的「最近小窗」区块在这里补插一次。
+        tryAttachRecents()
         if (colorOs17) {
             attachPlatformGlass()
             return true
