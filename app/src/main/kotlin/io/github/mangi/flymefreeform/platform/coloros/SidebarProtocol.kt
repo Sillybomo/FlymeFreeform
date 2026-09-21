@@ -102,16 +102,23 @@ internal object SidebarProtocol {
                 }
         }
 
-    /** 工具执行消息：不带会话 id 与截止时间，属于免会话的一次性请求。 */
+    /**
+     * 工具执行消息：不带会话 id 与截止时间，属于免会话的一次性请求。
+     *
+     * @param replyTo 回执通道：侧边栏处理完顺带回传工具目录
+     * （TOOL_CATALOG_PAYLOAD）；目录经 system_server 落 Settings，扇形才能拿到图标
+     */
     fun toolMessage(
         alias: String,
         targetUid: Int,
         clickX: Float = 0f,
         clickY: Float = 0f,
+        replyTo: Messenger? = null,
     ): Message =
         Message.obtain().apply {
             what = RUN_TOOL
             arg1 = VERSION
+            this.replyTo = replyTo
             data =
                 Bundle().apply {
                     putString(TOOL_ALIAS, alias)

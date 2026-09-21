@@ -42,17 +42,24 @@ internal class ColorOsSidebarClient(
 
     /**
      * 免会话绑定（目录请求 / 工具执行）使用的 bind 标志：
-     * AUTO_CREATE 拉起侧边栏进程，ALLOW_FOREGROUND_SERVICE_STARTS 授予它在绑定期间
-     * 启动前台服务的许可（扇形触发工具时侧边栏处于后台，识屏等工具内部
-     * startForegroundService 会被 Android 12+ 的后台 FGS 限制拒绝且异常被原厂吞掉）。
+     * AUTO_CREATE 拉起侧边栏进程，0x10000000 = BIND_ALLOW_FOREGROUND_SERVICE_STARTS
+     * （API 31 SystemApi，公开 SDK 无常量）授予它在绑定期间启动前台服务的许可——
+     * 扇形触发工具时侧边栏处于后台，识屏等工具内部 startForegroundService 会被
+     * Android 12+ 的后台 FGS 限制拒绝且异常被原厂吞掉。
      */
-    private val TOOL_BIND_FLAGS =
-        Context.BIND_AUTO_CREATE or Context.BIND_ALLOW_FOREGROUND_SERVICE_STARTS
+    private val TOOL_BIND_FLAGS = Context.BIND_AUTO_CREATE or 0x10000000
 
     /** 开机目录拉取失败的重试上限与间隔：覆盖侧边栏冷启动窗口（实测约 30 秒内就绪）。 */
     private val CATALOG_RETRY_LIMIT = 3
 
     private val CATALOG_RETRY_INTERVAL_MS = 15_000L
+
+    /**
+     * 工具执行绑定的延迟解绑时长：startSysTool 异步链（含内部线程切换）到
+     * startForegroundService 的实测延迟在几十毫秒级，5 秒余量充足且不占资源
+     * （绑定只是豁免凭证，不拉活进程）。
+     */
+    private val TOOL_UNBIND_DELAY_MS = 5_000L
 
     private val worker =
         ThreadPoolExecutor(
@@ -206,11 +213,19 @@ internal class ColorOsSidebarClient(
                 object : ServiceConnection {
                     override fun onServiceConnected(name: ComponentName, service: IBinder) {
                         try {
-                            Messenger(service).send(SidebarProtocol.toolMessage(alias, uid, clickX, clickY))
+                            Messenger(service).send(
+                                SidebarProtocol.toolMessage(alias, uid, clickX, clickY, reply),
+                            )
                         } catch (exception: RemoteException) {
                             logFailure("SIDEBAR_TOOL_SEND_FAILED", exception)
                         } finally {
-                            runCatching { userContext.unbindService(this) }
+                            // 不立即解绑：startSysTool 内部异步执行，真正调 startForegroundService
+                            // 晚于本方法返回；BIND_ALLOW_FOREGROUND_SERVICE_STARTS 的 FGS 豁免
+                            // 只在绑定存续期间有效（logcat 实测立即解绑时 bindFromPackage:null 被拒）。
+                            // 延迟解绑为执行窗口保住豁免；期间重复触发的绑定各自独立计次。
+                            handler.postDelayed({
+                                runCatching { userContext.unbindService(this) }
+                            }, TOOL_UNBIND_DELAY_MS)
                         }
                     }
 
