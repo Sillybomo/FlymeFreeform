@@ -325,7 +325,12 @@ internal fun PinnedAppsScreen(
                                     val added = app.component in addedSet
                                     BasicComponent(
                                         title = app.label,
-                                        summary = app.component.packageName,
+                                        summary =
+                                            if (ModulePreferences.isToolComponent(app.component)) {
+                                                stringResource(R.string.tool_entry_summary)
+                                            } else {
+                                                app.component.packageName
+                                            },
                                         startAction = { AppIcon(app) },
                                         endActions =
                                             if (added) {

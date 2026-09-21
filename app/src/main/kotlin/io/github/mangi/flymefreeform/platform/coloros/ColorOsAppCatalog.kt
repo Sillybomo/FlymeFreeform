@@ -6,13 +6,17 @@ import android.content.Context
 import android.content.pm.LauncherActivityInfo
 import android.content.pm.LauncherApps
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Paint
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Process
 import android.util.Log
 import io.github.mangi.flymefreeform.apps.AppSelectionPolicy
+import io.github.mangi.flymefreeform.config.ModulePreferences
 import io.github.mangi.flymefreeform.config.ModuleSettingsSnapshot
+import io.github.mangi.flymefreeform.config.ToolCatalogCodec
 import java.text.Collator
 import java.util.Locale
 import java.util.concurrent.Executor
@@ -39,6 +43,11 @@ internal class ColorOsAppCatalog(
     private val context: Context,
     private val executor: Executor,
     private val logger: (Int, String, Throwable?) -> Unit,
+    /**
+     * 侧边栏工具目录（文本协议，由侧边栏进程写入）。
+     * 工具不是可启动应用，`LauncherApps` 查不到，只能用这份目录解析固定项里的工具条目。
+     */
+    private val toolCatalog: () -> String? = { null },
     private val publish: (AppCatalogSnapshot) -> Unit,
 ) {
     private val iconRenderer = ColorOsRadialIconRenderer(context.resources, logger)
@@ -99,10 +108,11 @@ internal class ColorOsAppCatalog(
                 collator.compare(first.label, second.label)
             }
         val byPackage = entries.groupBy { entry -> entry.component.packageName }
+        val tools = ToolCatalogCodec.decode(toolCatalog()).associateBy(ToolCatalogCodec.Record::alias)
         val radial =
             AppSelectionPolicy.radialItems(
                 pinsSaved = settings.pinsSaved,
-                availablePins = resolvePins(settings.pinnedComponents, byComponent, byPackage),
+                availablePins = resolvePins(settings.pinnedComponents, byComponent, byPackage, tools),
                 recent = recents,
                 all = alphabetical,
                 identity = RadialAppEntry::component,
@@ -140,13 +150,18 @@ internal class ColorOsAppCatalog(
     /**
      * 固定项按组件精确匹配；ColorOS 的启动组件会随应用更新或别名变化漂移，
      * 因此退化为「同包唯一启动项」兜底，仍无法解析则打诊断码 —— 避免"设置里加了、扇形里看不到"却无线索。
+     * 工具固定项（伪包名 `ModulePreferences.TOOL_PACKAGE`）改从侧边栏工具目录解析。
      */
     private fun resolvePins(
         pins: List<ComponentName>,
         byComponent: Map<ComponentName, RadialAppEntry>,
         byPackage: Map<String, List<RadialAppEntry>>,
+        tools: Map<String, ToolCatalogCodec.Record>,
     ): List<RadialAppEntry> =
         pins.mapNotNull { pin ->
+            if (ModulePreferences.isToolComponent(pin)) {
+                return@mapNotNull resolveToolPin(pin, tools)
+            }
             byComponent[pin]?.let { return@mapNotNull it }
             val samePackage = byPackage[pin.packageName]
             val remapped = samePackage?.takeIf { it.size == 1 }?.first()
@@ -162,6 +177,44 @@ internal class ColorOsAppCatalog(
                 null
             }
         }
+
+    /** 工具固定项：别名即伪组件的类名；目录缺失或工具在当前设备不可用时打诊断码并跳过。 */
+    private fun resolveToolPin(
+        pin: ComponentName,
+        tools: Map<String, ToolCatalogCodec.Record>,
+    ): RadialAppEntry? {
+        val record = tools[pin.className]
+        if (record == null) {
+            logger(Log.WARN, "PINNED_TOOL_UNRESOLVED ${pin.className}", null)
+            return null
+        }
+        if (!record.available) {
+            logger(Log.WARN, "PINNED_TOOL_UNAVAILABLE ${pin.className}", null)
+            return null
+        }
+        return RadialAppEntry(
+            component = pin,
+            label = record.label,
+            icon = decodeIcon(record.iconPng) ?: toolPlaceholderIcon(),
+        )
+    }
+
+    private fun decodeIcon(png: ByteArray?): Bitmap? =
+        png?.let { bytes ->
+            runCatching {
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }.getOrNull()
+        }
+
+    /** 目录里没有图标时的占位：中性圆形方块，保证固定项仍然可见、可滑选。 */
+    private fun toolPlaceholderIcon(): Bitmap {
+        val size = (TOOL_ICON_DP * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        return Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also { bitmap ->
+            val canvas = Canvas(bitmap)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = PLACEHOLDER_COLOR }
+            canvas.drawRoundRect(0f, 0f, size.toFloat(), size.toFloat(), size / 4f, size / 4f, paint)
+        }
+    }
 
     private fun recentComponents(): List<ComponentName> {
         val activityManager = context.getSystemService(ActivityManager::class.java) ?: return emptyList()
@@ -208,5 +261,9 @@ internal class ColorOsAppCatalog(
     private companion object {
         const val RECENT_LIMIT = 48
         const val MODULE_PACKAGE = "io.github.mangi.flymefreeform"
+
+        /** 工具图标占位尺寸（dp）与颜色。 */
+        const val TOOL_ICON_DP = 48f
+        const val PLACEHOLDER_COLOR = 0x33FFFFFF
     }
 }

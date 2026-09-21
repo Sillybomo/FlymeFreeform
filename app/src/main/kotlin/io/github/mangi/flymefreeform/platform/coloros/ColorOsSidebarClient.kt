@@ -75,6 +75,65 @@ internal class ColorOsSidebarClient(
         return true
     }
 
+    /**
+     * 免会话执行侧边栏工具（小布识屏 / 屏幕翻译等）。
+     *
+     * 工具是侧边栏进程内的 `AbsTool`，无法从 system_server 直接启动，
+     * 因此临时绑定一次 `UIService`、发一条 [SidebarProtocol.RUN_TOOL] 后立即解绑；
+     * 面板会话状态机完全不受影响（两者可以同时存在，也可以不打开面板单独执行）。
+     *
+     * @param alias 侧边栏工具别名（来自工具目录，已在侧边栏侧校验过字符集）
+     * @return 是否成功发起绑定（执行结果由侧边栏进程的日志体现）
+     */
+    fun runTool(alias: String): Boolean {
+        if (!SidebarProtocol.isValidToolAlias(alias)) return false
+        return try {
+            worker.execute { sendToolRequest(alias) }
+            true
+        } catch (exception: RuntimeException) {
+            logFailure("SIDEBAR_TOOL_QUEUE_FULL", exception)
+            false
+        }
+    }
+
+    private fun sendToolRequest(alias: String) {
+        try {
+            val userId = ActivityManager::class.java.getMethod("getCurrentUser").invoke(null) as Int
+            val user = UserHandle::class.java.getMethod("of", Int::class.javaPrimitiveType).invoke(null, userId) as UserHandle
+            val userContext =
+                Context::class.java.getMethod("createContextAsUser", UserHandle::class.java, Int::class.javaPrimitiveType)
+                    .invoke(context, user, 0) as Context
+            val uid = ColorOsSidebarTarget.supportedUid(userContext)
+            if (uid == null) {
+                logFailure("SIDEBAR_TOOL_TARGET_UNAVAILABLE")
+                return
+            }
+            val connection =
+                object : ServiceConnection {
+                    override fun onServiceConnected(name: ComponentName, service: IBinder) {
+                        try {
+                            Messenger(service).send(SidebarProtocol.toolMessage(alias, uid))
+                        } catch (exception: RemoteException) {
+                            logFailure("SIDEBAR_TOOL_SEND_FAILED", exception)
+                        } finally {
+                            runCatching { userContext.unbindService(this) }
+                        }
+                    }
+
+                    override fun onServiceDisconnected(name: ComponentName) = Unit
+                }
+            val intent = Intent(ColorOsSidebarTarget.BIND_ACTION).setComponent(COMPONENT)
+            val bound =
+                userContext.bindService(intent, Context.BIND_AUTO_CREATE, { task -> handler.post(task) }, connection)
+            if (!bound) {
+                logFailure("SIDEBAR_TOOL_BIND_FAILED")
+                runCatching { userContext.unbindService(connection) }
+            }
+        } catch (exception: Exception) {
+            logFailure("SIDEBAR_TOOL_FAILED", exception)
+        }
+    }
+
     fun cancel() {
         val request = current ?: return
         if (request.committed) {

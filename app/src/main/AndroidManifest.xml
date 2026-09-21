@@ -28,6 +28,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          Hook 进程（system_server / 侧边栏）的远端配置是只读的，共享状态（最近小窗、工具目录）
+          改由它们广播、本 App 落盘。导出注册才能接收其它 UID 的广播，载荷在接收端做校验。
+        -->
+        <receiver
+            android:name=".framework.SharedStateReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.mangi.flymefreeform.action.SHARED_STATE" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

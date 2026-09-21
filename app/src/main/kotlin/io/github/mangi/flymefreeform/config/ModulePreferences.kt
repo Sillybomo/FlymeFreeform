@@ -1,5 +1,7 @@
 package io.github.mangi.flymefreeform.config
 
+import android.content.ComponentName
+
 /** App 与 Hook 进程共享的框架配置协议；已发布的名称和类型不可随意复用。 */
 internal object ModulePreferences {
     const val GROUP = "module_runtime"
@@ -15,6 +17,13 @@ internal object ModulePreferences {
 
     /** 最近以小窗打开的应用（system_server 写入，侧边栏进程读取后渲染「最近小窗」区块）。 */
     const val KEY_RECENT_FREEFORM = "recent_freeform_v1"
+
+    /**
+     * 侧边栏工具目录（侧边栏进程写入，App 与 system_server 读取）。
+     * 工具（小布识屏 / 屏幕翻译 / 截屏等）不是独立应用，无法用 LauncherApps 枚举，
+     * 只能由侧边栏进程从原厂 ToolEntryHelper 导出。
+     */
+    const val KEY_TOOL_CATALOG = "tool_catalog_v1"
     const val DEFAULT_ENABLED = false
     const val DEFAULT_CORNER_ENABLED = true
     const val DEFAULT_CORNER_TRIGGER_RANGE_DP = 84
@@ -34,6 +43,15 @@ internal object ModulePreferences {
 
     /** 「最近小窗」区块最多展示几个最近应用；超出按时间截断（最近的在最左）。 */
     const val MAX_RECENT_FREEFORM = 8
+
+    /**
+     * 工具在固定列表里的伪包名：`ComponentName(TOOL_PACKAGE, alias)`。
+     * 复用既有 ComponentName 存储与去重逻辑，不新增一套固定项格式。
+     */
+    const val TOOL_PACKAGE = "io.github.mangi.flymefreeform.tool"
+
+    fun isToolComponent(component: ComponentName): Boolean =
+        component.packageName == TOOL_PACKAGE && component.className.isNotEmpty()
 
     fun coerceCornerTriggerRangeDp(value: Int): Int =
         value.coerceIn(MIN_CORNER_TRIGGER_RANGE_DP, MAX_CORNER_TRIGGER_RANGE_DP)

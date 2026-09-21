@@ -7,10 +7,14 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.LauncherApps
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Paint
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Process
+import io.github.mangi.flymefreeform.config.ModulePreferences
+import io.github.mangi.flymefreeform.config.ToolCatalogCodec
 import java.text.Collator
 import java.util.Locale
 import java.util.concurrent.ArrayBlockingQueue
@@ -26,7 +30,15 @@ internal data class InstalledLauncherApp(
     val icon: Bitmap,
 )
 
-internal class LauncherAppRepository(private val context: Context) {
+internal class LauncherAppRepository(
+    private val context: Context,
+    /**
+     * 侧边栏工具目录（文本协议，由 Hook 侧广播后经模块 App 落盘）。
+     * 工具不是可启动应用，`LauncherApps` 枚举不到，需单独并入候选列表，
+     * 固定后用伪包名 [ModulePreferences.TOOL_PACKAGE] 标识。
+     */
+    private val toolCatalog: () -> String? = { null },
+) {
     private val worker =
         ThreadPoolExecutor(
             1,
@@ -39,6 +51,9 @@ internal class LauncherAppRepository(private val context: Context) {
         )
     private val mutableApps = MutableStateFlow<List<InstalledLauncherApp>>(emptyList())
     val apps: StateFlow<List<InstalledLauncherApp>> = mutableApps.asStateFlow()
+    private var cachedApps: List<InstalledLauncherApp> = emptyList()
+    private var cachedCatalog: String? = null
+    private var cachedTools: List<InstalledLauncherApp> = emptyList()
 
     private val packageReceiver =
         object : BroadcastReceiver() {
@@ -64,7 +79,7 @@ internal class LauncherAppRepository(private val context: Context) {
         worker.execute {
             val launcherApps = context.getSystemService(LauncherApps::class.java) ?: return@execute
             val collator = Collator.getInstance(Locale.getDefault())
-            mutableApps.value =
+            cachedApps =
                 launcherApps
                     .getActivityList(null, Process.myUserHandle())
                     .asSequence()
@@ -83,6 +98,52 @@ internal class LauncherAppRepository(private val context: Context) {
                     .distinctBy(InstalledLauncherApp::component)
                     .sortedWith { first, second -> collator.compare(first.label, second.label) }
                     .toList()
+            publish()
+        }
+    }
+
+    /**
+     * 工具目录到达或变化后重算列表。
+     * 目录未变化时只复用缓存，避免每次配置回调都重新解码图标。
+     */
+    fun refreshTools() {
+        worker.execute { publish() }
+    }
+
+    private fun publish() {
+        val catalog = runCatching { toolCatalog() }.getOrNull()
+        if (catalog != cachedCatalog) {
+            cachedCatalog = catalog
+            cachedTools = decodeTools(catalog)
+        }
+        mutableApps.value =
+            if (cachedTools.isEmpty()) cachedApps else cachedTools.sortedBy { it.label } + cachedApps
+    }
+
+    /** 只保留当前设备实际可用的工具；图标缺失时用中性占位方块，保证条目可见可点。 */
+    private fun decodeTools(catalog: String?): List<InstalledLauncherApp> =
+        ToolCatalogCodec.decode(catalog)
+            .filter(ToolCatalogCodec.Record::available)
+            .mapNotNull { record ->
+                try {
+                    InstalledLauncherApp(
+                        component = ComponentName(ModulePreferences.TOOL_PACKAGE, record.alias),
+                        label = record.label,
+                        icon = record.iconPng?.let { bytes ->
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        } ?: placeholderIcon(),
+                    )
+                } catch (_: RuntimeException) {
+                    null
+                }
+            }
+
+    private fun placeholderIcon(): Bitmap {
+        val size = (ICON_CACHE_SIZE_DP * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        return Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also { bitmap ->
+            val canvas = Canvas(bitmap)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x33FFFFFF }
+            canvas.drawRoundRect(0f, 0f, size.toFloat(), size.toFloat(), size / 4f, size / 4f, paint)
         }
     }
 

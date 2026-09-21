@@ -1,6 +1,7 @@
 package io.github.mangi.flymefreeform.platform.coloros
 
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -14,7 +15,9 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import io.github.mangi.flymefreeform.config.ModulePreferences
 import io.github.mangi.flymefreeform.config.ModuleSettingsSnapshot
+import io.github.mangi.flymefreeform.config.SharedStateProtocol
 import io.github.mangi.flymefreeform.gesture.AdaptiveCornerGestureConfig
 import io.github.mangi.flymefreeform.gesture.CornerGestureConfig
 import io.github.mangi.flymefreeform.gesture.CornerGestureEngine
@@ -53,7 +56,12 @@ internal class ColorOsFreeformCoordinator(
     private val launcher = ColorOsFreeformLauncher(context)
     private val sidebar = ColorOsSidebarClient(context, handler, logger)
     private val appCatalog =
-        ColorOsAppCatalog(context, catalogExecutor, logger) { snapshot ->
+        ColorOsAppCatalog(
+            context,
+            catalogExecutor,
+            logger,
+            toolCatalog = { configuration.readToolCatalog() },
+        ) { snapshot ->
             handler.post {
                 // 后台任务完成时配置可能已再次变化，旧结果不得覆盖新外观。
                 if (snapshot.matches(lastSettings)) {
@@ -388,12 +396,39 @@ internal class ColorOsFreeformCoordinator(
 
     private fun launchCommittedApp(entry: RadialAppEntry) {
         if (!isGestureEnvironmentAllowed()) return
+        // 工具（小布识屏 / 屏幕翻译等）是侧边栏进程内的 AbsTool，不能当应用启动：
+        // 转交侧边栏执行，不创建小窗，因此也不计入「最近小窗」。
+        if (ModulePreferences.isToolComponent(entry.component)) {
+            if (!sidebar.runTool(entry.component.className)) {
+                logger(Log.WARN, "TOOL_LAUNCH_REJECTED ${entry.component.className}", null)
+            }
+            return
+        }
         when (val result = launcher.launch(entry.component)) {
-            FreeformLaunchResult.Started -> configuration.recordRecentFreeform(entry.component)
+            FreeformLaunchResult.Started -> publishRecentFreeform(entry.component)
             FreeformLaunchResult.TargetUnavailable ->
                 logger(Log.WARN, "FREEFORM_LAUNCH_TARGET_UNAVAILABLE", null)
             is FreeformLaunchResult.Failed ->
                 logger(Log.WARN, result.diagnosticCode, result.cause)
+        }
+    }
+
+    /**
+     * Hook 进程的框架远端配置是只读的（实测 `edit()` 抛 `UnsupportedOperationException`），
+     * 因此「最近小窗」经广播交给模块 App 落盘，侧边栏进程随后按只读方式读取渲染。
+     */
+    private fun publishRecentFreeform(component: ComponentName) {
+        try {
+            context.sendBroadcast(
+                Intent(SharedStateProtocol.ACTION)
+                    .setPackage(SharedStateProtocol.MODULE_PACKAGE)
+                    // App 装完处于 stopped 状态时普通广播不会唤醒它，必须显式包含。
+                    .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+                    .putExtra(SharedStateProtocol.EXTRA_KIND, SharedStateProtocol.KIND_RECENT_FREEFORM)
+                    .putExtra(SharedStateProtocol.EXTRA_COMPONENT, component.flattenToString()),
+            )
+        } catch (exception: Exception) {
+            logger(Log.WARN, "RECENT_FREEFORM_PUBLISH_FAILED", exception)
         }
     }
 

@@ -2,14 +2,19 @@ package io.github.mangi.flymefreeform.hook
 
 import android.app.Service
 import android.content.Intent
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.Process
 import android.util.Log
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
+import io.github.mangi.flymefreeform.config.SharedStateProtocol
+import io.github.mangi.flymefreeform.config.ToolCatalogCodec
 import io.github.mangi.flymefreeform.platform.coloros.ColorOsAllAppsContent
 import io.github.mangi.flymefreeform.platform.coloros.ColorOsAllAppsEndpoint
 import io.github.mangi.flymefreeform.platform.coloros.ColorOsSidebarTarget
+import io.github.mangi.flymefreeform.platform.coloros.ColorOsToolCatalog
 
 /** 只注入侧边栏 UI 进程；服务方法照常执行一次，应用/工具的启动仍交给原厂路由。 */
 internal class SidebarHookInstaller(private val module: XposedModule, private val configuration: ProcessConfiguration) {
@@ -71,6 +76,8 @@ internal class SidebarHookInstaller(private val module: XposedModule, private va
                     original
                 }
             log(Log.INFO, "ALL_APPS_BRIDGE_INSTALLED", null)
+            // 工具目录与面板会话无关：进程就绪即发布一次，设置界面的「添加应用」立刻能列出工具。
+            publishToolCatalog(loader)
         } catch (exception: ReflectiveOperationException) {
             handles.forEach { it.unhook() }
             log(Log.WARN, "ALL_APPS_SIGNATURE_UNAVAILABLE", exception)
@@ -83,5 +90,57 @@ internal class SidebarHookInstaller(private val module: XposedModule, private va
         }
     }
 
+    /**
+     * 枚举侧边栏工具并广播给模块 App 落盘（Hook 进程的远端配置只读，App 才能写）。
+     *
+     * 时机：本 Hook 安装在 `onPackageReady` 阶段，此时 `ActivityThread.currentApplication()`
+     * 可能尚未就绪（实测该情况下会静默拿不到上下文），因此按秒重试若干次；
+     * 仍失败则留诊断码，面板打开时 [ColorOsAllAppsEndpoint] 还会再发一次。
+     */
+    private fun publishToolCatalog(loader: ClassLoader, attempt: Int = 0) {
+        try {
+            val context = currentApplication()
+            if (context == null) {
+                if (attempt < CONTEXT_RETRY_LIMIT) {
+                    Handler(Looper.getMainLooper()).postDelayed(
+                        { publishToolCatalog(loader, attempt + 1) },
+                        CONTEXT_RETRY_INTERVAL_MS,
+                    )
+                } else {
+                    log(Log.WARN, "TOOL_CATALOG_CONTEXT_UNAVAILABLE", null)
+                }
+                return
+            }
+            val records = ColorOsToolCatalog(context, loader, ::log).build()
+            if (records.isEmpty()) {
+                log(Log.WARN, "TOOL_CATALOG_EMPTY", null)
+                return
+            }
+            context.sendBroadcast(
+                Intent(SharedStateProtocol.ACTION)
+                    .setPackage(SharedStateProtocol.MODULE_PACKAGE)
+                    // App 装完处于 stopped 状态时普通广播不会唤醒它，必须显式包含。
+                    .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+                    .putExtra(SharedStateProtocol.EXTRA_KIND, SharedStateProtocol.KIND_TOOL_CATALOG)
+                    .putExtra(SharedStateProtocol.EXTRA_CATALOG, ToolCatalogCodec.encode(records)),
+            )
+            log(Log.INFO, "TOOL_CATALOG_PUBLISHED count=${records.size}", null)
+        } catch (exception: Exception) {
+            log(Log.WARN, "TOOL_CATALOG_PUBLISH_FAILED", exception)
+        }
+    }
+
+    private fun currentApplication(): android.content.Context? =
+        runCatching {
+            Class.forName("android.app.ActivityThread")
+                .getMethod("currentApplication")
+                .invoke(null) as? android.content.Context
+        }.getOrNull()
+
     private fun log(priority: Int, code: String, throwable: Throwable?) = module.log(priority, "FlymeFreeform", code, throwable)
+
+    private companion object {
+        const val CONTEXT_RETRY_LIMIT = 8
+        const val CONTEXT_RETRY_INTERVAL_MS = 1_000L
+    }
 }

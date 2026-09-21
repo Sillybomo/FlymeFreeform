@@ -20,6 +20,8 @@ import android.os.UserManager
 import android.provider.Settings
 import android.util.Log
 import io.github.mangi.flymefreeform.config.ModuleSettingsSnapshot
+import io.github.mangi.flymefreeform.config.SharedStateProtocol
+import io.github.mangi.flymefreeform.config.ToolCatalogCodec
 import io.github.mangi.flymefreeform.hook.ProcessConfiguration
 import io.github.mangi.flymefreeform.hook.ModuleEnvironmentState
 import io.github.mangi.flymefreeform.window.AllAppsActionHandoff
@@ -36,6 +38,9 @@ internal class ColorOsAllAppsEndpoint(
         log(Log.WARN, code, exception)
     }
     private val messenger = Messenger(Handler(Looper.getMainLooper(), ::receive))
+    /** 工具目录与执行器；只在侧边栏进程可用（工具是侧边栏内部的 AbsTool 处理器）。 */
+    private val toolCatalog by lazy { ColorOsToolCatalog(service, loader, log) }
+    private var toolCatalogPublished = false
     private var request: Request? = null
     private var lastResult: Pair<String, Int>? = null
     private var disposed = false
@@ -68,6 +73,33 @@ internal class ColorOsAllAppsEndpoint(
         environment.start(service)
         environment.observe { if (!environment.isGestureAllowed()) cancel() }
         configuration.observe(settingsObserver)
+        // 侧边栏进程启动即可发布工具目录，让设置界面的「添加应用」能列出工具。
+        handler.post(::publishToolCatalog)
+    }
+
+    /**
+     * 把侧边栏工具目录写入框架远端配置，供 App（选应用界面）与 system_server（扇形图标）读取。
+     * 只在首次成功或目录为空时重试；失败不阻断面板链路。
+     */
+    private fun publishToolCatalog() {
+        if (toolCatalogPublished) return
+        try {
+            val records = toolCatalog.build()
+            if (records.isEmpty()) return
+            // Hook 进程的远端配置只读，目录经广播交给模块 App 落盘（App 是唯一有权写入的一方）。
+            service.sendBroadcast(
+                Intent(SharedStateProtocol.ACTION)
+                    .setPackage(SharedStateProtocol.MODULE_PACKAGE)
+                    // App 装完处于 stopped 状态时普通广播不会唤醒它，必须显式包含。
+                    .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+                    .putExtra(SharedStateProtocol.EXTRA_KIND, SharedStateProtocol.KIND_TOOL_CATALOG)
+                    .putExtra(SharedStateProtocol.EXTRA_CATALOG, ToolCatalogCodec.encode(records)),
+            )
+            toolCatalogPublished = true
+            log(Log.INFO, "TOOL_CATALOG_PUBLISHED count=${records.size}", null)
+        } catch (exception: Exception) {
+            log(Log.WARN, "TOOL_CATALOG_PUBLISH_FAILED", exception)
+        }
     }
 
     fun onUnbound(id: String?) {
@@ -113,6 +145,19 @@ internal class ColorOsAllAppsEndpoint(
         if (disposed || !SidebarProtocol.isTrustedPeer(message.sendingUid, Process.SYSTEM_UID, message.arg1)) return true
         safely {
             val data = message.peekData() ?: return@safely
+            // 免会话的工具执行：扇形里选中的工具条目经此转交，不参与面板会话状态机。
+            if (message.what == SidebarProtocol.RUN_TOOL) {
+                val alias = data.getString(SidebarProtocol.TOOL_ALIAS)
+                if (data.getInt(SidebarProtocol.TARGET_UID, -1) != Process.myUid() ||
+                    !SidebarProtocol.isValidToolAlias(alias)
+                ) {
+                    log(Log.WARN, "TOOL_REQUEST_REJECTED", null)
+                    return@safely
+                }
+                if (!toolCatalog.run(alias!!)) log(Log.WARN, "TOOL_NOT_RUNNABLE $alias", null)
+                publishToolCatalog()
+                return@safely
+            }
             val id = data.getString(SidebarProtocol.REQUEST_ID) ?: return@safely
             if (!SidebarProtocol.isValidRequestId(id) || data.getInt(SidebarProtocol.TARGET_UID, -1) != Process.myUid()) return@safely
             val reply = message.replyTo ?: return@safely
@@ -221,6 +266,8 @@ internal class ColorOsAllAppsEndpoint(
             recentFreeform = { configuration.readRecentFreeform() },
             log = log,
         )
+        // 首次发布可能早于工具表初始化完成；面板打开时再补一次。
+        publishToolCatalog()
         advance()
     }
 

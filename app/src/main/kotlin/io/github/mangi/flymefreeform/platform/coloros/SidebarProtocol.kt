@@ -21,6 +21,14 @@ internal object SidebarProtocol {
     const val EXIT_STARTED = 15
     const val HIDE_BACKDROP = 16
     const val BACKDROP_HIDDEN = 17
+
+    /**
+     * 免会话执行侧边栏工具（小布识屏 / 屏幕翻译等）。
+     * 工具是侧边栏进程内的 `AbsTool` 处理器，不是可启动的 Activity，
+     * 因此只能在侧边栏进程里调用其 `handle()`，扇形的工具条目经此消息转交。
+     */
+    const val RUN_TOOL = 18
+    const val TOOL_ALIAS = "tool_alias"
     const val REQUEST_ID = "request_id"
     const val DEADLINE = "deadline_uptime"
     const val TARGET_UID = "target_uid"
@@ -62,4 +70,21 @@ internal object SidebarProtocol {
                     putInt(TARGET_UID, targetUid)
                 }
         }
+
+    /** 工具执行消息：不带会话 id 与截止时间，属于免会话的一次性请求。 */
+    fun toolMessage(alias: String, targetUid: Int): Message =
+        Message.obtain().apply {
+            what = RUN_TOOL
+            arg1 = VERSION
+            data =
+                Bundle().apply {
+                    putString(TOOL_ALIAS, alias)
+                    putInt(TARGET_UID, targetUid)
+                }
+        }
+
+    /** 工具别名只允许来自侧边栏自身的别名表，限制长度与字符集以防伪造消息注入。 */
+    fun isValidToolAlias(alias: String?): Boolean =
+        alias != null && alias.isNotEmpty() && alias.length <= 64 &&
+            alias.all { character -> character.isLetterOrDigit() || character == '_' || character == '-' || character == '.' }
 }

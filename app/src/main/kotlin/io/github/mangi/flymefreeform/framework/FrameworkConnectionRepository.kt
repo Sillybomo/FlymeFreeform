@@ -2,11 +2,13 @@ package io.github.mangi.flymefreeform.framework
 
 import android.content.ComponentName
 import android.content.SharedPreferences
+import android.util.Log
 import io.github.libxposed.service.XposedService
 import io.github.libxposed.service.XposedServiceHelper
 import io.github.mangi.flymefreeform.config.ModulePreferences
 import io.github.mangi.flymefreeform.config.ModuleSettingsSnapshot
 import io.github.mangi.flymefreeform.config.OutsideTapCloseMode
+import io.github.mangi.flymefreeform.config.PinnedComponentCodec
 import java.util.IdentityHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -72,8 +74,7 @@ internal class FrameworkConnectionRepository {
     fun setPauseInGameMode(enabled: Boolean) =
         updateSettings { it.copy(pauseInGameMode = enabled) }
 
-    fun setPinnedComponents(components: List<ComponentName>) =
-        updateSettings {
+    fun setPinnedComponents(components: List<ComponentName>) =        updateSettings {
             it.copy(
                 pinsSaved = true,
                 pinnedComponents =
@@ -115,8 +116,60 @@ internal class FrameworkConnectionRepository {
         }
     }
 
-    private fun updateSettings(transform: (ModuleSettingsSnapshot) -> ModuleSettingsSnapshot) {
+    /** 读取侧边栏工具目录（由侧边栏进程广播、App 落盘）；未连接或未发布时返回 null。 */
+    fun readToolCatalog(): String? =
+        activeConnection?.preferences?.let { preferences ->
+            runCatching { preferences.getString(ModulePreferences.KEY_TOOL_CATALOG, null) }.getOrNull()
+        }
+
+    /**
+     * 记录一次「小窗打开」：最近的在最前，去重后截断。
+     *
+     * 由 Hook 侧广播驱动（Hook 进程的远端配置只读，只有 App 能写），
+     * 供「全部」面板的「最近小窗」区块读取。
+     */
+    fun recordRecentFreeform(component: ComponentName) {
         worker.execute {
+            val preferences = activeConnection?.preferences ?: return@execute
+            val current =
+                PinnedComponentCodec
+                    .decodeRaw(
+                        preferences.getString(ModulePreferences.KEY_RECENT_FREEFORM, "") ?: "",
+                        ModulePreferences.MAX_RECENT_FREEFORM,
+                    )
+                    .mapNotNull(ComponentName::unflattenFromString)
+            val next =
+                (listOf(component) + current.filterNot { it == component })
+                    .take(ModulePreferences.MAX_RECENT_FREEFORM)
+            runCatching {
+                preferences
+                    .edit()
+                    .putString(
+                        ModulePreferences.KEY_RECENT_FREEFORM,
+                        next.joinToString("\n", transform = ComponentName::flattenToString),
+                    )
+                    .apply()
+            }.onFailure { exception ->
+                Log.w(TAG, "SHARED_STATE_RECENT_WRITE_FAILED", exception)
+            }
+        }
+    }
+
+    /** 写入侧边栏工具目录；内容未变化时不重复落盘。 */
+    fun writeToolCatalog(catalog: String) {
+        if (catalog.isEmpty()) return
+        worker.execute {
+            val preferences = activeConnection?.preferences ?: return@execute
+            if (preferences.getString(ModulePreferences.KEY_TOOL_CATALOG, null) == catalog) return@execute
+            runCatching {
+                preferences.edit().putString(ModulePreferences.KEY_TOOL_CATALOG, catalog).apply()
+            }.onFailure { exception ->
+                Log.w(TAG, "SHARED_STATE_CATALOG_WRITE_FAILED", exception)
+            }
+        }
+    }
+
+    private fun updateSettings(transform: (ModuleSettingsSnapshot) -> ModuleSettingsSnapshot) {        worker.execute {
             val connection = activeConnection ?: return@execute
             val previous = mutableState.value
             if (!previous.canChangeSettings) return@execute
@@ -356,5 +409,8 @@ internal class FrameworkConnectionRepository {
     private companion object {
         const val WORKER_THREAD_NAME = "FlymeFreeform-Service"
         const val MAX_METADATA_LENGTH = 80
+
+        /** 共享状态写入失败的日志标签。 */
+        const val TAG = "FlymeFreeform"
     }
 }
