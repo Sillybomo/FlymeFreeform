@@ -71,6 +71,7 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import io.github.mangi.flymefreeform.config.ModulePreferences
 import io.github.mangi.flymefreeform.gesture.CornerSide
 import io.github.mangi.flymefreeform.gesture.RadialGeometry
 import io.github.mangi.flymefreeform.gesture.RadialLayout
@@ -199,10 +200,11 @@ internal class CornerRadialOverlayView(
 
     fun finishGesture() {
         val selection = selectedIndex
+        val target = selection?.let(::slotTarget)
         when {
             selection == null -> dismissAnimated()
-            selection < catalog.radialApps.size -> dismissAnimated(catalog.radialApps[selection])
-            else -> showMorePanel()
+            target == null -> showMorePanel()
+            else -> dismissAnimated(catalog.radialApps[target])
         }
     }
 
@@ -492,14 +494,20 @@ internal class CornerRadialOverlayView(
             val centerY = layout.origin.y + (destination.y - layout.origin.y) * motion.radialProgress
             val scale = motion.iconScale * contentScale
             val ringProgress = itemRings.getOrNull(index)?.value ?: 0f
-            val diameter = metrics.iconDiameter * scale
+            val target = slotTarget(index)
+            val diameter =
+                (if (target != null && target >= outerApps().size) {
+                    metrics.innerIconDiameter
+                } else {
+                    metrics.iconDiameter
+                }) * scale
             rotate(motion.rotationDegrees, pivot = Offset(centerX, centerY)) {
-                if (index < catalog.radialApps.size) {
-                    radialImages.value.getOrNull(index)?.let { image ->
+                if (target == null) {
+                    drawMoreItem(centerX, centerY, diameter, contentAlpha)
+                } else {
+                    radialImages.value.getOrNull(target)?.let { image ->
                         drawSystemImage(image, centerX, centerY, diameter, contentAlpha)
                     }
-                } else {
-                    drawMoreItem(centerX, centerY, diameter, contentAlpha)
                 }
                 val strokeWidth = metrics.selectionRingMaxWidth * scale * ringProgress
                 if (strokeWidth > 0f) {
@@ -760,14 +768,18 @@ internal class CornerRadialOverlayView(
                 safeInsets = safeInsets,
                 systemIconSize = systemIconDiameter,
                 density = resources.displayMetrics.density,
-                radialItemCount = catalog.radialApps.size + 1,
+                radialItemCount = minOf(catalog.radialApps.size, ModulePreferences.OUTER_PINNED_APPS) + 1,
+                radialInnerCount = (catalog.radialApps.size - ModulePreferences.OUTER_PINNED_APPS).coerceAtLeast(0),
                 radialInsets = radialInsets,
                 fontScale = resources.configuration.fontScale,
                 panelItemCount = catalog.panelApps.size,
                 anchorOnLeft = side == CornerSide.Left,
             )
         metricsState.value = metrics
-        layoutState.value =
+        // 双圈：前 OUTER_PINNED_APPS 个应用在外圈（含「更多」槽），其余进内圈。
+        val outerCount = outerApps().size
+        val innerApps = innerApps()
+        val outerLayout =
             RadialGeometry.layout(
                 side = side,
                 width = safeWidth,
@@ -775,9 +787,51 @@ internal class CornerRadialOverlayView(
                 offsetX = radialInsets.left,
                 offsetY = radialInsets.top,
                 radius = metrics.radial.radius,
-                itemCount = catalog.radialApps.size + 1,
+                itemCount = outerCount + 1,
+            )
+        val innerCenters =
+            if (innerApps.isEmpty() || metrics.radial.innerRadius <= 0f) {
+                emptyList()
+            } else {
+                RadialGeometry.layoutInner(
+                    side = side,
+                    width = safeWidth,
+                    height = safeHeight,
+                    radiusInner = metrics.radial.innerRadius,
+                    itemCount = innerApps.size,
+                    offsetX = radialInsets.left,
+                    offsetY = radialInsets.top,
+                ).itemCenters
+            }
+        layoutState.value =
+            RadialLayout(
+                side = side,
+                origin = outerLayout.origin,
+                radius = outerLayout.radius,
+                itemCenters = outerLayout.itemCenters + innerCenters,
             )
         if (!panelModeState.value && !dismissing) updateGestureFromLatestPoint()
+    }
+
+    /** 外圈应用：固定顺序的前 OUTER_PINNED_APPS 个。 */
+    private fun outerApps(): List<RadialAppEntry> =
+        catalog.radialApps.take(io.github.mangi.flymefreeform.config.ModulePreferences.OUTER_PINNED_APPS)
+
+    /** 内圈应用：外圈放不下（超过 OUTER_PINNED_APPS）的部分。 */
+    private fun innerApps(): List<RadialAppEntry> =
+        catalog.radialApps.drop(io.github.mangi.flymefreeform.config.ModulePreferences.OUTER_PINNED_APPS)
+
+    /**
+     * 合并布局下标 → 应用下标（[catalog.radialApps] 内）；返回 null 表示「更多」槽。
+     * 合并顺序：外圈应用 0..n-1、「更多」在 n、内圈应用 n+1..。
+     */
+    private fun slotTarget(index: Int): Int? {
+        val outerCount = outerApps().size
+        return when {
+            index < outerCount -> index
+            index == outerCount -> null
+            else -> outerCount + (index - outerCount - 1)
+        }
     }
 
     private fun updateGestureFromLatestPoint() {

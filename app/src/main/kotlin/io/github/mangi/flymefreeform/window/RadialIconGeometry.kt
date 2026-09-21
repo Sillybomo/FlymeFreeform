@@ -20,12 +20,16 @@ internal object RadialIconGeometry {
      */
     private const val MIN_ICON_DIAMETER_DP = 30f
 
+    /** 内圈图标基准直径（dp）；同时受内圈弦长与两圈径向间隙约束。 */
+    private const val INNER_ICON_DIAMETER_DP = 42f
+
     fun fit(
         width: Float,
         height: Float,
         density: Float,
         safeInsets: OverlaySafeInsets,
         itemCount: Int,
+        innerCount: Int = 0,
     ): RadialVisualMetrics {
         require(width.isFinite() && width > 0f && height.isFinite() && height > 0f)
         require(density.isFinite() && density > 0f)
@@ -51,6 +55,19 @@ internal object RadialIconGeometry {
         val fitScale = minOf(1f, safeWidth / requestedExtent, safeHeight / requestedExtent)
         val unit = pixelsPerBaseDp * fitScale
         val diameter = diameterDp * unit
+        // 内圈：半径 = 外圈半径 − 两圈图标半径与留白；直径取"内圈弦长约束"与"径向间隙约束"的较小者。
+        // 42dp 是内圈图标的基准值（径向间隙恰好卡满），再大会与外圈图标相切。
+        var innerRadius = 0f
+        var innerDiameter = 0f
+        if (innerCount > 0) {
+            val innerDiameterDp =
+                INNER_ICON_DIAMETER_DP.coerceAtMost(
+                    2f * (BASE_RADIUS_DP - (diameterDp + INNER_ICON_DIAMETER_DP) / 2f - BASE_ITEM_PADDING_DP) -
+                        diameterDp,
+                )
+            innerRadius = (BASE_RADIUS_DP - (diameterDp + innerDiameterDp) / 2f - BASE_ITEM_PADDING_DP) * unit
+            innerDiameter = innerDiameterDp * unit
+        }
         return RadialVisualMetrics(
             radius = BASE_RADIUS_DP * unit,
             plateDiameter = diameter,
@@ -59,6 +76,8 @@ internal object RadialIconGeometry {
             selectionKeepRadius = diameter * 1.25f,
             itemPadding = BASE_ITEM_PADDING_DP * unit,
             pixelsPerBaseDp = unit,
+            innerRadius = innerRadius,
+            innerIconDiameter = innerDiameter,
         )
     }
 }

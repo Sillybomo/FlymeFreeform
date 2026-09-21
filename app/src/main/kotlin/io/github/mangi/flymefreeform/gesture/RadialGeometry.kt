@@ -51,6 +51,41 @@ internal object RadialGeometry {
         return RadialLayout(side, origin, radius, centers)
     }
 
+    /**
+     * 内圈排布：全部条目都是应用，均匀落在 [radiusInner] 的弧上（无「更多」特殊槽）。
+     * 角度公式与外圈一致，保证两圈视觉上同心。
+     */
+    fun layoutInner(
+        side: CornerSide,
+        width: Float,
+        height: Float,
+        radiusInner: Float,
+        itemCount: Int,
+        offsetX: Float = 0f,
+        offsetY: Float = 0f,
+    ): RadialLayout {
+        val origin = GesturePoint(offsetX + if (side == CornerSide.Left) 0f else width, offsetY + height)
+        if (itemCount <= 0 || radiusInner <= 0f) {
+            return RadialLayout(side, origin, radiusInner, emptyList())
+        }
+        val step = SPAN_DEGREES / itemCount
+        val centers =
+            List(itemCount) { index ->
+                val angle =
+                    if (side == CornerSide.Left) {
+                        -SAFE_DEGREES - (index + 0.5f) * step
+                    } else {
+                        -180f + SAFE_DEGREES + (index + 0.5f) * step
+                    }
+                val radians = angle * PI.toFloat() / 180f
+                GesturePoint(
+                    x = origin.x + cos(radians) * radiusInner,
+                    y = origin.y + sin(radians) * radiusInner,
+                )
+            }
+        return RadialLayout(side, origin, radiusInner, centers)
+    }
+
     fun selection(
         layout: RadialLayout,
         x: Float,

@@ -35,11 +35,13 @@ internal object ModulePreferences {
     const val MAX_CORNER_TRIGGER_RANGE_DP = 160
 
     /**
-     * 扇形最多固定几个应用（不含「更多」）。
-     * 9 个 + 「更多」= 10 个槽位，此时槽位角 8.4°、弦长 34.6dp，
-     * 图标按弦长收紧到约 33dp —— 已是可点选的下限，再加会明显互叠。
+     * 扇形最多固定几个应用（不含「更多」）：外圈最多 6 个 + 内圈最多 5 个 = 11。
+     * 固定顺序即圈层顺序：前 6 个在外圈，第 7~11 个进内圈。
      */
-    const val MAX_PINNED_APPS = 9
+    const val MAX_PINNED_APPS = 11
+
+    /** 外圈应用上限；超出部分自动进内圈。 */
+    const val OUTER_PINNED_APPS = 6
 
     /** 「最近小窗」区块最多展示几个最近应用；超出按时间截断（最近的在最左）。 */
     const val MAX_RECENT_FREEFORM = 8

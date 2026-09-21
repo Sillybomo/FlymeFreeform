@@ -52,6 +52,12 @@ internal object SidebarProtocol {
      */
     const val RECORD_RECENT = 21
     const val RECORD_RECENT_EXTRA = "record_recent"
+
+    /**
+     * 开机目录请求：system_server 主动向侧边栏要目录（回包走 TOOL_CATALOG_PAYLOAD）。
+     * 有了它，Settings 副本不再依赖"用户先开一次面板"。
+     */
+    const val REQUEST_TOOL_CATALOG = 22
     const val REQUEST_ID = "request_id"
     const val DEADLINE = "deadline_uptime"
     const val TARGET_UID = "target_uid"

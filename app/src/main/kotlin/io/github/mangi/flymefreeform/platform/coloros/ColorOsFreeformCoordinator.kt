@@ -125,6 +125,8 @@ internal class ColorOsFreeformCoordinator(
         handler.post {
             recentFreeformEntries.addAll(configuration.readRecentFreeform())
             registerToolRequestReceiver()
+            // 开机主动拉目录：Settings 副本不再依赖"用户先开一次面板"。
+            sidebar.requestToolCatalog()
             environmentState.start(context)
             environmentState.observe { applySettings(configuration.snapshot) }
             registerPackageObserver()
@@ -466,10 +468,14 @@ internal class ColorOsFreeformCoordinator(
             context.registerReceiver(
                 object : BroadcastReceiver() {
                     override fun onReceive(receiverContext: Context?, intent: Intent?) {
-                        latestToolCatalog?.let { catalog ->
-                            SharedSettings.writeToolCatalog(context, shrinkIcons(catalog))
-                            logger(Log.INFO, "TOOL_CATALOG_SERVED", null)
+                        val cached = latestToolCatalog
+                        if (cached == null) {
+                            // 开机后还没拿到过目录：向侧边栏现拉一次，回包会再走本写入。
+                            sidebar.requestToolCatalog()
+                            return
                         }
+                        SharedSettings.writeToolCatalog(context, shrinkIcons(cached))
+                        logger(Log.INFO, "TOOL_CATALOG_SERVED", null)
                     }
                 },
                 IntentFilter(SharedStateProtocol.ACTION_REQUEST_TOOLS),

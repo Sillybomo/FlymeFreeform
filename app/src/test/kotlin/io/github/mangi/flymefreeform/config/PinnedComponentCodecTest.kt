@@ -21,9 +21,9 @@ class PinnedComponentCodecTest {
             j/.J
             k/.K
         """.trimIndent()
-        // 上限随之变为 9（9 个固定应用 + 「更多」= 10 个槽位）。
+        // 上限随之变为 11（外圈 6 + 内圈最多 5）。
         assertEquals(
-            listOf("a/.A", "b/.B", "c/.C", "d/.D", "e/.E", "f/.F", "g/.G", "h/.H", "i/.I"),
+            listOf("a/.A", "b/.B", "c/.C", "d/.D", "e/.E", "f/.F", "g/.G", "h/.H", "i/.I", "j/.J", "k/.K"),
             PinnedComponentCodec.decodeRaw(raw),
         )
     }

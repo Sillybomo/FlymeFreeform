@@ -152,6 +152,20 @@ internal class ColorOsAllAppsEndpoint(
         if (disposed || !SidebarProtocol.isTrustedPeer(message.sendingUid, Process.SYSTEM_UID, message.arg1)) return true
         safely {
             val data = message.peekData() ?: return@safely
+            // 开机目录请求：把当前目录回给请求方（system_server），由它写 Settings.Global。
+            if (message.what == SidebarProtocol.REQUEST_TOOL_CATALOG) {
+                val replyTo = message.replyTo
+                if (replyTo != null && data.getInt(SidebarProtocol.TARGET_UID, -1) == Process.myUid()) {
+                    val records = toolCatalog.build()
+                    if (records.isNotEmpty()) {
+                        runCatching {
+                            replyTo.send(SidebarProtocol.catalogMessage(ToolCatalogCodec.encode(records), Process.myUid()))
+                        }
+                        log(Log.INFO, "TOOL_CATALOG_SERVED count=${records.size}", null)
+                    }
+                }
+                return@safely
+            }
             // 免会话的工具执行：扇形里选中的工具条目经此转交，不参与面板会话状态机。
             if (message.what == SidebarProtocol.RUN_TOOL) {
                 val alias = data.getString(SidebarProtocol.TOOL_ALIAS)

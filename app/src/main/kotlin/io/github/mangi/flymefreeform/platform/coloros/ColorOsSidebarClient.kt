@@ -105,6 +105,63 @@ internal class ColorOsSidebarClient(
         }
     }
 
+    /**
+     * 开机向侧边栏索要工具目录：回包经 [reply]（类级 Messenger）走
+     * TOOL_CATALOG_PAYLOAD 分支 → onToolCatalog → 写 Settings.Global。
+     */
+    fun requestToolCatalog() {
+        try {
+            worker.execute {
+                try {
+                    val userId = ActivityManager::class.java.getMethod("getCurrentUser").invoke(null) as Int
+                    val user = UserHandle::class.java.getMethod("of", Int::class.javaPrimitiveType).invoke(null, userId) as UserHandle
+                    val userContext =
+                        Context::class.java.getMethod("createContextAsUser", UserHandle::class.java, Int::class.javaPrimitiveType)
+                            .invoke(context, user, 0) as Context
+                    val uid = ColorOsSidebarTarget.supportedUid(userContext)
+                    ?: run {
+                        logFailure("SIDEBAR_TOOL_TARGET_UNAVAILABLE")
+                        return@execute
+                    }
+                    val connection =
+                        object : ServiceConnection {
+                            override fun onServiceConnected(name: ComponentName, service: IBinder) {
+                                try {
+                                    val request =
+                                        Message.obtain().apply {
+                                            what = SidebarProtocol.REQUEST_TOOL_CATALOG
+                                            arg1 = SidebarProtocol.VERSION
+                                            replyTo = reply
+                                            data = android.os.Bundle().apply {
+                                                putInt(SidebarProtocol.TARGET_UID, uid)
+                                            }
+                                        }
+                                    Messenger(service).send(request)
+                                } catch (exception: RemoteException) {
+                                    logFailure("SIDEBAR_CATALOG_REQUEST_FAILED", exception)
+                                } finally {
+                                    runCatching { userContext.unbindService(this) }
+                                }
+                            }
+
+                            override fun onServiceDisconnected(name: ComponentName) = Unit
+                        }
+                    val intent = Intent(ColorOsSidebarTarget.BIND_ACTION).setComponent(COMPONENT)
+                    val bound =
+                        userContext.bindService(intent, Context.BIND_AUTO_CREATE, { task -> handler.post(task) }, connection)
+                    if (!bound) {
+                        logFailure("SIDEBAR_CATALOG_BIND_FAILED")
+                        runCatching { userContext.unbindService(connection) }
+                    }
+                } catch (exception: Exception) {
+                    logFailure("SIDEBAR_CATALOG_REQUEST_FAILED", exception)
+                }
+            }
+        } catch (exception: RuntimeException) {
+            logFailure("SIDEBAR_TOOL_QUEUE_FULL", exception)
+        }
+    }
+
     private fun sendToolRequest(alias: String) {
         try {
             val userId = ActivityManager::class.java.getMethod("getCurrentUser").invoke(null) as Int

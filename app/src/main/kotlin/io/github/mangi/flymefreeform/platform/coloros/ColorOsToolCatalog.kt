@@ -34,6 +34,10 @@ internal class ColorOsToolCatalog(
     private var helper: Any? = null
     private var helperClass: Class<*>? = null
 
+    /** 原厂工具路由与条目类型（按需加载，失败在调用处降级）。 */
+    private val pageRoutClass: Class<*> by lazy { loader.loadClass(PAGE_ROUT_CLASS) }
+    private val entryBeanClass: Class<*> by lazy { loader.loadClass(ENTRY_BEAN_CLASS) }
+
     /**
      * 枚举当前设备上实际可用的工具。
      * 任何反射失败都退化为空列表（不抛异常），由调用方决定是否重试。
@@ -47,24 +51,66 @@ internal class ColorOsToolCatalog(
     /**
      * 执行指定别名的工具。
      *
+     * 优先走原厂点击路径 `PageRoutUtils.startSysTool(entryBean)` —— 反编译证实原厂点工具
+     * 不是裸调 `AbsTool.handle()`，还会做 PageRout 记账（点击坐标等）；
+     * 小布识屏这类依赖坐标的工具缺了它就会"有时没反应"（截屏不依赖所以一直正常）。
+     * 找不到条目时退回 `handle()` 兜底。
+     *
      * @param alias [build] 导出的别名
-     * @return 是否成功调用到 `handle()`
+     * @return 是否成功调用到执行入口
      */
     fun run(alias: String): Boolean {
         val instance = ensureHelper() ?: return false
+        // 1) 原厂路径：从工具条目列表里找该别名的 EntryBean，交给 PageRoutUtils。
+        val bean = findToolBean(instance, alias)
+        if (bean != null) {
+            try {
+                pageRoutClass
+                    .getMethod(PAGE_ROUT_METHOD, entryBeanClass)
+                    .invoke(null, bean)
+                log(Log.INFO, "TOOL_INVOKED $alias via=${PAGE_ROUT_METHOD}", null)
+                return true
+            } catch (exception: Exception) {
+                log(Log.WARN, "TOOL_PAGE_ROUT_FAILED $alias", unwrap(exception))
+            }
+        }
+        // 2) 兜底：直接 handle()（截屏类不依赖 PageRout 记账，仍然可用）。
         return try {
             val tool =
                 helperClass?.getMethod("getToolByAlias", String::class.java)
                     ?.invoke(instance, alias)
                     ?: return false
             tool.javaClass.getMethod("handle").invoke(tool)
-            log(Log.INFO, "TOOL_INVOKED $alias", null)
+            log(Log.INFO, "TOOL_INVOKED $alias via=handle", null)
             true
         } catch (exception: Exception) {
             log(Log.WARN, "TOOL_INVOKE_FAILED $alias", unwrap(exception))
             false
         }
     }
+
+    /** 在原厂工具条目列表里按别名找 EntryBean（工具条目的 activity 字段即别名）。 */
+    private fun findToolBean(instance: Any, alias: String): Any? =
+        try {
+            val helperClass = loader.loadClass(ENTRY_HELPER_CLASS)
+            val helper = helperClass.getMethod("getActiveInstance").invoke(null) ?: return null
+            val lists =
+                listOf("getShownTools", "getAllAppListForTool").mapNotNull { name ->
+                    runCatching { helperClass.getMethod(name).invoke(helper) as? List<*> }.getOrNull()
+                }
+            lists
+                .flatten()
+                .filterNotNull()
+                .firstOrNull { bean ->
+                    runCatching {
+                        bean.javaClass.getMethod("getActivity").invoke(bean) == alias ||
+                            bean.javaClass.getMethod("getIntentString").invoke(bean) == alias
+                    }.getOrDefault(false)
+                }
+        } catch (exception: Exception) {
+            log(Log.WARN, "TOOL_BEAN_LOOKUP_FAILED", unwrap(exception))
+            null
+        }
 
     private fun ensureHelper(): Any? {
         helper?.let { return it }
@@ -157,6 +203,13 @@ internal class ColorOsToolCatalog(
         (exception as? InvocationTargetException)?.cause ?: exception
 
     private companion object {
+        const val PAGE_ROUT_CLASS =
+            "com.oplus.smartsidebar.panelview.edgepanel.utils.PageRoutUtils"
+        const val PAGE_ROUT_METHOD = "startSysTool"
+        const val ENTRY_BEAN_CLASS =
+            "com.oplus.smartsidebar.panelview.edgepanel.data.entrybeans.models.beans.EntryBean"
+        const val ENTRY_HELPER_CLASS =
+            "com.oplus.smartsidebar.panelview.edgepanel.data.entrybeans.EntryBeanHelper"
         const val TOOL_HELPER_CLASS =
             "com.oplus.smartsidebar.panelview.edgepanel.data.entrybeans.ToolEntryHelper"
 

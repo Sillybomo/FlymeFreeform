@@ -33,6 +33,10 @@ internal data class RadialVisualMetrics(
     val selectionKeepRadius: Float,
     val itemPadding: Float,
     val pixelsPerBaseDp: Float,
+    /** 内圈半径；0 表示本次没有内圈。 */
+    val innerRadius: Float = 0f,
+    /** 内圈图标直径；0 表示本次没有内圈。 */
+    val innerIconDiameter: Float = 0f,
 ) {
     /** 选中圈最大宽度：与几何留白解耦，固定按图标直径的 6.8% 取值（约等于原 3.25dp 观感）。 */
     val selectionRingMaxWidth: Float
@@ -81,6 +85,8 @@ internal object AdaptiveOverlayGeometry {
         systemIconSize: Float,
         density: Float,
         radialItemCount: Int,
+        /** 内圈应用数；0 表示不启用内圈。 */
+        radialInnerCount: Int = 0,
         radialInsets: OverlaySafeInsets = safeInsets,
         fontScale: Float,
         panelItemCount: Int,
@@ -98,7 +104,7 @@ internal object AdaptiveOverlayGeometry {
         val panelReferenceRadius =
             min(shortEdge * PANEL_REFERENCE_WIDTH_FRACTION, safeHeight * PANEL_REFERENCE_HEIGHT_FRACTION)
                 .coerceAtLeast(plateDiameter * PANEL_REFERENCE_MIN_PLATE_DISTANCE)
-        val radial = RadialIconGeometry.fit(width, height, density, radialInsets, radialItemCount)
+        val radial = RadialIconGeometry.fit(width, height, density, radialInsets, radialItemCount, radialInnerCount)
 
         val outerMargin = plateDiameter * OUTER_MARGIN_FRACTION
         val requestedContentHorizontalPadding = plateDiameter * PANEL_HORIZONTAL_PADDING_FRACTION
