@@ -84,9 +84,14 @@ internal fun PinnedAppsScreen(
     apps: List<InstalledLauncherApp>,
     onBack: () -> Unit,
     onPinnedComponentsChange: (List<ComponentName>) -> Unit,
+    onInnerPinnedComponentsChange: (List<ComponentName>) -> Unit,
 ) {
     var pickerOpen by remember { mutableStateOf(false) }
     var pickerQuery by remember { mutableStateOf("") }
+    // 本轮添加/移除的目标圈：false=外圈，true=内圈
+    var addingToInner by remember { mutableStateOf(false) }
+    // 内圈本地顺序；远端配置回读同步前以它为准
+    var localInnerOrder by remember { mutableStateOf<List<ComponentName>?>(null) }
     // 拖动或增删后的本地顺序；远端配置回读同步前以它为准，避免列表闪回旧顺序
     var localOrder by remember { mutableStateOf<List<ComponentName>?>(null) }
     var draggingComponent by remember { mutableStateOf<ComponentName?>(null) }
@@ -136,6 +141,11 @@ internal fun PinnedAppsScreen(
                 if (localOrder != null && pinned == localOrder) localOrder = null
             }
             val displayed = localOrder ?: pinned
+            val pinnedInner = state.settings.innerPinnedComponents
+            LaunchedEffect(pinnedInner) {
+                if (localInnerOrder != null && pinnedInner == localInnerOrder) localInnerOrder = null
+            }
+            val displayedInner = localInnerOrder ?: pinnedInner
             val appByComponent = remember(apps) { apps.associateBy(InstalledLauncherApp::component) }
             Box(modifier = Modifier.fillMaxSize().captureForTopBar(backdrop)) {
                 LazyColumn(
@@ -154,7 +164,7 @@ internal fun PinnedAppsScreen(
                 ) {
                 item(key = "added_intro") {
                     Text(
-                        text = stringResource(R.string.added_apps_title),
+                        text = stringResource(R.string.outer_apps_section_title),
                         modifier =
                             Modifier
                                 .padding(start = 16.dp, bottom = 8.dp)
@@ -259,6 +269,99 @@ internal fun PinnedAppsScreen(
                             },
                             onClick = {
                                 pickerQuery = ""
+                                addingToInner = false
+                                pickerOpen = true
+                            },
+                            onClickLabel = stringResource(R.string.select_apps_action),
+                            role = Role.Button,
+                            enabled = state.canChangeSettings,
+                        )
+                    }
+                }
+                item(key = "inner_intro") {
+                    Text(
+                        text = stringResource(R.string.inner_apps_section_title),
+                        modifier =
+                            Modifier
+                                .padding(start = 16.dp, top = 16.dp, bottom = 8.dp)
+                                .semantics { heading() },
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        style = MiuixTheme.textStyles.subtitle,
+                    )
+                }
+                item(key = "inner") {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        displayedInner.forEach { component ->
+                            val app = appByComponent[component]
+                            BasicComponent(
+                                title = app?.label ?: component.packageName,
+                                summary =
+                                    if (app == null) {
+                                        stringResource(R.string.pinned_app_missing)
+                                    } else {
+                                        null
+                                    },
+                                startAction = {
+                                    AppIcon(
+                                        app
+                                            ?: InstalledLauncherApp(
+                                                component,
+                                                "",
+                                                android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888),
+                                            ),
+                                    )
+                                },
+                                endActions = {
+                                    IconButton(
+                                        onClick = {
+                                            val updated = displayedInner.filterNot { it == component }
+                                            localInnerOrder = updated
+                                            onInnerPinnedComponentsChange(updated)
+                                        },
+                                        enabled = state.canChangeSettings,
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Remove,
+                                            contentDescription = null,
+                                            tint = MiuixTheme.colorScheme.onErrorContainer,
+                                        )
+                                    }
+                                },
+                                onClick = {},
+                                enabled = state.canChangeSettings,
+                            )
+                        }
+                        if (displayedInner.isEmpty()) {
+                            BasicComponent(
+                                title = stringResource(R.string.inner_apps_empty),
+                                summary = stringResource(R.string.inner_apps_empty_summary),
+                                enabled = false,
+                            )
+                        }
+                        BasicComponent(
+                            title = stringResource(R.string.select_apps_action),
+                            startAction = {
+                                Box(
+                                    modifier =
+                                        Modifier
+                                            .size(44.dp)
+                                            .squircleBackground(
+                                                MiuixTheme.colorScheme.secondaryContainer,
+                                                12.dp,
+                                            ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Add,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(22.dp),
+                                        tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                                    )
+                                }
+                            },
+                            onClick = {
+                                pickerQuery = ""
+                                addingToInner = true
                                 pickerOpen = true
                             },
                             onClickLabel = stringResource(R.string.select_apps_action),
@@ -269,8 +372,9 @@ internal fun PinnedAppsScreen(
                 }
                 }
             }
-            // 勾选状态跟随 displayed，sheet 内增删即时可见
-            val addedSet = remember(displayed) { displayed.toSet() }
+            // 勾选状态跟随目标圈：外圈看 displayed，内圈看 displayedInner
+            val targetList = if (addingToInner) displayedInner else displayed
+            val addedSet = remember(targetList) { targetList.toSet() }
             val candidates =
                 remember(apps, pickerQuery) {
                     if (pickerQuery.isBlank()) {
@@ -326,10 +430,12 @@ internal fun PinnedAppsScreen(
                                     BasicComponent(
                                         title = app.label,
                                         summary =
-                                            if (ModulePreferences.isToolComponent(app.component)) {
-                                                stringResource(R.string.tool_entry_summary)
-                                            } else {
-                                                app.component.packageName
+                                            when {
+                                                ModulePreferences.isToolComponent(app.component) ->
+                                                    stringResource(R.string.tool_entry_summary)
+                                                app.component in displayedInner ->
+                                                    stringResource(R.string.inner_apps_section_title)
+                                                else -> app.component.packageName
                                             },
                                         startAction = { AppIcon(app) },
                                         endActions =
@@ -346,15 +452,34 @@ internal fun PinnedAppsScreen(
                                                 null
                                             },
                                         onClick = {
-                                            val updated =
-                                                if (added) {
-                                                    displayed.filterNot { it == app.component }
-                                                } else {
-                                                    (displayed + app.component)
-                                                        .take(ModulePreferences.MAX_PINNED_APPS)
+                                            if (addingToInner) {
+                                                val updated =
+                                                    if (added) {
+                                                        displayedInner.filterNot { it == app.component }
+                                                    } else {
+                                                        (displayedInner + app.component)
+                                                            .take(ModulePreferences.MAX_INNER_APPS)
+                                                    }
+                                                localInnerOrder = updated
+                                                onInnerPinnedComponentsChange(updated)
+                                            } else {
+                                                // 目标是外圈：同时从内圈移除，避免同一个应用出现在两圈
+                                                val innerUpdated =
+                                                    displayedInner.filterNot { it == app.component }
+                                                if (innerUpdated != displayedInner) {
+                                                    localInnerOrder = innerUpdated
+                                                    onInnerPinnedComponentsChange(innerUpdated)
                                                 }
-                                            localOrder = updated
-                                            onPinnedComponentsChange(updated)
+                                                val updated =
+                                                    if (added) {
+                                                        displayed.filterNot { it == app.component }
+                                                    } else {
+                                                        (displayed + app.component)
+                                                            .take(ModulePreferences.OUTER_PINNED_APPS)
+                                                    }
+                                                localOrder = updated
+                                                onPinnedComponentsChange(updated)
+                                            }
                                         },
                                         onClickLabel =
                                             stringResource(
@@ -368,7 +493,15 @@ internal fun PinnedAppsScreen(
                                         role = Role.Button,
                                         enabled =
                                             state.canChangeSettings &&
-                                                (added || displayed.size < ModulePreferences.MAX_PINNED_APPS),
+                                                (
+                                                    added ||
+                                                        targetList.size <
+                                                            if (addingToInner) {
+                                                                ModulePreferences.MAX_INNER_APPS
+                                                            } else {
+                                                                ModulePreferences.OUTER_PINNED_APPS
+                                                            }
+                                                    ),
                                     )
                                 }
                         }

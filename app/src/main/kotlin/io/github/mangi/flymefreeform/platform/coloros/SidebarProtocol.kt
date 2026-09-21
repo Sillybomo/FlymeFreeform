@@ -29,6 +29,8 @@ internal object SidebarProtocol {
      */
     const val RUN_TOOL = 18
     const val TOOL_ALIAS = "tool_alias"
+    const val TOOL_CLICK_X = "tool_click_x"
+    const val TOOL_CLICK_Y = "tool_click_y"
 
     /**
      * 工具目录载荷：侧边栏进程 → system_server。
@@ -101,13 +103,20 @@ internal object SidebarProtocol {
         }
 
     /** 工具执行消息：不带会话 id 与截止时间，属于免会话的一次性请求。 */
-    fun toolMessage(alias: String, targetUid: Int): Message =
+    fun toolMessage(
+        alias: String,
+        targetUid: Int,
+        clickX: Float = 0f,
+        clickY: Float = 0f,
+    ): Message =
         Message.obtain().apply {
             what = RUN_TOOL
             arg1 = VERSION
             data =
                 Bundle().apply {
                     putString(TOOL_ALIAS, alias)
+                    putFloat(TOOL_CLICK_X, clickX)
+                    putFloat(TOOL_CLICK_Y, clickY)
                     putInt(TARGET_UID, targetUid)
                 }
         }

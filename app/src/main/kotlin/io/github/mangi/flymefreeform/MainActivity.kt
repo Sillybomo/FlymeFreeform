@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
                     onPauseInGameModeChange = repository::setPauseInGameMode,
                     onRequestScopes = repository::requestMissingScopes,
                     onPinnedComponentsChange = repository::setPinnedComponents,
+                    onInnerPinnedComponentsChange = repository::setInnerPinnedComponents,
                 )
             }
         }

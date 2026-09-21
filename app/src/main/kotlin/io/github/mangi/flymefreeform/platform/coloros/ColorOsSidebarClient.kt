@@ -94,10 +94,10 @@ internal class ColorOsSidebarClient(
      * @param alias 侧边栏工具别名（来自工具目录，已在侧边栏侧校验过字符集）
      * @return 是否成功发起绑定（执行结果由侧边栏进程的日志体现）
      */
-    fun runTool(alias: String): Boolean {
+    fun runTool(alias: String, clickX: Float = 0f, clickY: Float = 0f): Boolean {
         if (!SidebarProtocol.isValidToolAlias(alias)) return false
         return try {
-            worker.execute { sendToolRequest(alias) }
+            worker.execute { sendToolRequest(alias, clickX, clickY) }
             true
         } catch (exception: RuntimeException) {
             logFailure("SIDEBAR_TOOL_QUEUE_FULL", exception)
@@ -162,7 +162,7 @@ internal class ColorOsSidebarClient(
         }
     }
 
-    private fun sendToolRequest(alias: String) {
+    private fun sendToolRequest(alias: String, clickX: Float, clickY: Float) {
         try {
             val userId = ActivityManager::class.java.getMethod("getCurrentUser").invoke(null) as Int
             val user = UserHandle::class.java.getMethod("of", Int::class.javaPrimitiveType).invoke(null, userId) as UserHandle
@@ -178,7 +178,7 @@ internal class ColorOsSidebarClient(
                 object : ServiceConnection {
                     override fun onServiceConnected(name: ComponentName, service: IBinder) {
                         try {
-                            Messenger(service).send(SidebarProtocol.toolMessage(alias, uid))
+                            Messenger(service).send(SidebarProtocol.toolMessage(alias, uid, clickX, clickY))
                         } catch (exception: RemoteException) {
                             logFailure("SIDEBAR_TOOL_SEND_FAILED", exception)
                         } finally {

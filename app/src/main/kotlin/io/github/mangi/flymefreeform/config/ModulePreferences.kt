@@ -18,6 +18,9 @@ internal object ModulePreferences {
     /** 最近以小窗打开的应用（system_server 写入，侧边栏进程读取后渲染「最近小窗」区块）。 */
     const val KEY_RECENT_FREEFORM = "recent_freeform_v1"
 
+    /** 内圈固定应用（v2 配置，与外圈 KEY_CORNER_PINS 相互独立）。 */
+    const val KEY_CORNER_INNER_PINS = "corner_inner_pins_v1"
+
     /**
      * 侧边栏工具目录（侧边栏进程写入，App 与 system_server 读取）。
      * 工具（小布识屏 / 屏幕翻译 / 截屏等）不是独立应用，无法用 LauncherApps 枚举，
@@ -40,8 +43,11 @@ internal object ModulePreferences {
      */
     const val MAX_PINNED_APPS = 11
 
-    /** 外圈应用上限；超出部分自动进内圈。 */
+    /** 外圈应用上限。 */
     const val OUTER_PINNED_APPS = 6
+
+    /** 内圈应用上限。 */
+    const val MAX_INNER_APPS = 5
 
     /** 「最近小窗」区块最多展示几个最近应用；超出按时间截断（最近的在最左）。 */
     const val MAX_RECENT_FREEFORM = 8

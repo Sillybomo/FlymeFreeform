@@ -32,10 +32,14 @@ internal data class AppCatalogSnapshot(
     val radialApps: List<RadialAppEntry> = emptyList(),
     val panelApps: List<RadialAppEntry> = emptyList(),
     val settings: ModuleSettingsSnapshot = ModuleSettingsSnapshot(),
+    /** 外圈应用数；双圈布局以此划分外/内（内圈 = radialApps.drop(outerCount)）。 */
+    val outerCount: Int = 0,
 ) {
     fun matches(settings: ModuleSettingsSnapshot): Boolean =
         this.settings.pinsSaved == settings.pinsSaved &&
-            this.settings.pinnedComponents == settings.pinnedComponents
+            this.settings.pinnedComponents == settings.pinnedComponents &&
+            this.settings.innerPinsSaved == settings.innerPinsSaved &&
+            this.settings.innerPinnedComponents == settings.innerPinnedComponents
 }
 
 /** 目录查询只在后台执行；发布后的 Bitmap 与列表供手势热路径只读。 */
@@ -63,7 +67,9 @@ internal class ColorOsAppCatalog(
             val content =
                 if (cached != null && cached.revision == revision &&
                     cached.settings.pinsSaved == settings.pinsSaved &&
-                    cached.settings.pinnedComponents == settings.pinnedComponents
+                    cached.settings.pinnedComponents == settings.pinnedComponents &&
+                    cached.settings.innerPinsSaved == settings.innerPinsSaved &&
+                    cached.settings.innerPinnedComponents == settings.innerPinnedComponents
                 ) {
                     cached
                 } else {
@@ -85,7 +91,14 @@ internal class ColorOsAppCatalog(
                 }
             }
             shapedRadial.forEach { it.icon.prepareToDraw() }
-            publish(AppCatalogSnapshot(shapedRadial, content.panelApps, settings))
+            publish(
+                AppCatalogSnapshot(
+                    shapedRadial,
+                    content.panelApps,
+                    settings,
+                    outerCount = content.radialOuterCount,
+                ),
+            )
         }
     }
 
@@ -110,14 +123,20 @@ internal class ColorOsAppCatalog(
         val byPackage = entries.groupBy { entry -> entry.component.packageName }
         val tools = ToolCatalogCodec.decode(toolCatalog()).associateBy(ToolCatalogCodec.Record::alias)
         val radial =
-            AppSelectionPolicy.radialItems(
-                pinsSaved = settings.pinsSaved,
-                availablePins = resolvePins(settings.pinnedComponents, byComponent, byPackage, tools),
-                recent = recents,
-                all = alphabetical,
-                identity = RadialAppEntry::component,
-                limit = io.github.mangi.flymefreeform.config.ModulePreferences.MAX_PINNED_APPS,
-            )
+            if (settings.pinsSaved || settings.innerPinsSaved) {
+                // 双圈：外圈在前、内圈在后，两个圈的固定顺序各自保留。
+                resolvePins(settings.pinnedComponents, byComponent, byPackage, tools) +
+                    resolvePins(settings.innerPinnedComponents, byComponent, byPackage, tools)
+            } else {
+                AppSelectionPolicy.radialItems(
+                    pinsSaved = false,
+                    availablePins = emptyList(),
+                    recent = recents,
+                    all = alphabetical,
+                    identity = RadialAppEntry::component,
+                    limit = io.github.mangi.flymefreeform.config.ModulePreferences.MAX_PINNED_APPS,
+                )
+            }
         val excluded = radial.mapTo(HashSet(), RadialAppEntry::component)
         val panel =
             AppSelectionPolicy.panelItems(
@@ -136,13 +155,25 @@ internal class ColorOsAppCatalog(
             }
         }.toMap()
         panel.forEach { it.icon.prepareToDraw() }
-        return CatalogContent(revision, settings, radial, panel, sources)
+        return CatalogContent(
+            revision,
+            settings,
+            radial,
+            radialOuterCount = if (settings.pinsSaved || settings.innerPinsSaved) {
+                resolvePins(settings.pinnedComponents, byComponent, byPackage, tools).size
+            } else {
+                radial.size
+            },
+            panel,
+            sources,
+        )
     }
 
     private data class CatalogContent(
         val revision: Long,
         val settings: ModuleSettingsSnapshot,
         val radialApps: List<RadialAppEntry>,
+        val radialOuterCount: Int,
         val panelApps: List<RadialAppEntry>,
         val radialSources: Map<ComponentName, Drawable>,
     )

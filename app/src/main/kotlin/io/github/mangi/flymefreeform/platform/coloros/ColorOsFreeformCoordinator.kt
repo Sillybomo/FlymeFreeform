@@ -66,6 +66,13 @@ internal class ColorOsFreeformCoordinator(
     /** 最近小窗内存列表（头部最新）；跨重启由配置播种，跨进程由 Settings.Global 供读。 */
     private val recentFreeformEntries = ArrayDeque<ComponentName>()
 
+    /** 最近一次指针位置；工具执行时作为 PageRout 点击坐标传给侧边栏。 */
+    @Volatile
+    private var latestPointerX = 0f
+
+    @Volatile
+    private var latestPointerY = 0f
+
     private val appCatalog =
         ColorOsAppCatalog(
             context,
@@ -248,6 +255,8 @@ internal class ColorOsFreeformCoordinator(
     }
 
     private fun processPointerEvent(queued: QueuedPointerEvent) {
+        latestPointerX = queued.event.x
+        latestPointerY = queued.event.y
         val event = queued.event
         try {
             if (queued.generation != pointerGeneration || !pointerRegistered) return
@@ -435,8 +444,12 @@ internal class ColorOsFreeformCoordinator(
                 logger(Log.WARN, "TOOL_LAUNCH_ENV_BLOCKED ${entry.component.className}", null)
                 return
             }
-            logger(Log.INFO, "TOOL_LAUNCH_ATTEMPT ${entry.component.className}", null)
-            if (!sidebar.runTool(entry.component.className)) {
+            logger(
+                    Log.INFO,
+                    "TOOL_LAUNCH_ATTEMPT ${entry.component.className} @${latestPointerX.toInt()},${latestPointerY.toInt()}",
+                    null,
+                )
+            if (!sidebar.runTool(entry.component.className, latestPointerX, latestPointerY)) {
                 logger(Log.WARN, "TOOL_LAUNCH_REJECTED ${entry.component.className}", null)
             }
             return

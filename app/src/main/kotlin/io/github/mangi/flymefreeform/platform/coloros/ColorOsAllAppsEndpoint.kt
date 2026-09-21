@@ -175,7 +175,9 @@ internal class ColorOsAllAppsEndpoint(
                     log(Log.WARN, "TOOL_REQUEST_REJECTED", null)
                     return@safely
                 }
-                if (!toolCatalog.run(alias!!)) log(Log.WARN, "TOOL_NOT_RUNNABLE $alias", null)
+                val clickX = data.getFloat(SidebarProtocol.TOOL_CLICK_X, 0f)
+                val clickY = data.getFloat(SidebarProtocol.TOOL_CLICK_Y, 0f)
+                if (!toolCatalog.run(alias!!, clickX, clickY)) log(Log.WARN, "TOOL_NOT_RUNNABLE $alias", null)
                 publishToolCatalog()
                 return@safely
             }

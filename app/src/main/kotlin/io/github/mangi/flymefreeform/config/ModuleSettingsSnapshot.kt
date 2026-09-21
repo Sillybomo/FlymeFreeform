@@ -10,6 +10,8 @@ internal data class ModuleSettingsSnapshot(
     val cornerTriggerRangeDp: Int = ModulePreferences.DEFAULT_CORNER_TRIGGER_RANGE_DP,
     val pinsSaved: Boolean = false,
     val pinnedComponents: List<ComponentName> = emptyList(),
+    val innerPinsSaved: Boolean = false,
+    val innerPinnedComponents: List<ComponentName> = emptyList(),
     val outsideTapCloseMode: OutsideTapCloseMode =
         ModulePreferences.DEFAULT_OUTSIDE_TAP_CLOSE_MODE,
     val handleSwipeUpToMiniEnabled: Boolean =
@@ -46,6 +48,14 @@ internal data class ModuleSettingsSnapshot(
             )
         } else {
             editor.remove(ModulePreferences.KEY_CORNER_PINS)
+        }
+        if (innerPinsSaved) {
+            editor.putString(
+                ModulePreferences.KEY_CORNER_INNER_PINS,
+                encodeComponents(innerPinnedComponents, ModulePreferences.MAX_INNER_APPS),
+            )
+        } else {
+            editor.remove(ModulePreferences.KEY_CORNER_INNER_PINS)
         }
         return editor
     }
@@ -87,6 +97,7 @@ internal data class ModuleSettingsSnapshot(
                     ModulePreferences.DEFAULT_HANDLE_SWIPE_UP_TO_MINI_ENABLED,
                 )
             val pinsSaved = preferences.contains(ModulePreferences.KEY_CORNER_PINS)
+            val innerPinsSaved = preferences.contains(ModulePreferences.KEY_CORNER_INNER_PINS)
             val pins =
                 if (pinsSaved) {
                     decodePinnedComponents(
@@ -97,6 +108,15 @@ internal data class ModuleSettingsSnapshot(
                 }
             return ModuleSettingsSnapshot(
                 enabled = enabled,
+                innerPinsSaved = innerPinsSaved,
+                innerPinnedComponents =
+                    if (innerPinsSaved) {
+                        decodeComponents(
+                            preferences.getString(ModulePreferences.KEY_CORNER_INNER_PINS, "") ?: "",
+                        )
+                    } else {
+                        emptyList()
+                    },
                 leftCornerEnabled = leftEnabled,
                 rightCornerEnabled = rightEnabled,
                 cornerTriggerRangeDp = cornerTriggerRangeDp,
@@ -116,11 +136,21 @@ internal data class ModuleSettingsSnapshot(
         }
 
         fun encodePinnedComponents(components: List<ComponentName>): String =
+            encodeComponents(components, ModulePreferences.MAX_PINNED_APPS)
+
+        fun encodeComponents(components: List<ComponentName>, limit: Int): String =
             components
                 .asSequence()
                 .distinct()
-                .take(ModulePreferences.MAX_PINNED_APPS)
+                .take(limit)
                 .joinToString("\n", transform = ComponentName::flattenToString)
+
+        fun decodeComponents(value: String): List<ComponentName> =
+            PinnedComponentCodec
+                .decodeRaw(value, Int.MAX_VALUE)
+                .asSequence()
+                .mapNotNull(ComponentName::unflattenFromString)
+                .toList()
 
         fun decodePinnedComponents(value: String): List<ComponentName> =
             PinnedComponentCodec

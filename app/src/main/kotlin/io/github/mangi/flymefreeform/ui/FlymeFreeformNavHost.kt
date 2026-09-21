@@ -37,6 +37,7 @@ internal fun FlymeFreeformNavHost(
     onPauseInGameModeChange: (Boolean) -> Unit,
     onRequestScopes: () -> Unit,
     onPinnedComponentsChange: (List<ComponentName>) -> Unit,
+    onInnerPinnedComponentsChange: (List<ComponentName>) -> Unit,
 ) {
     val backStack = rememberNavBackStack(AppRoute.Settings)
     val popBackStack = remember(backStack) {
@@ -83,6 +84,7 @@ internal fun FlymeFreeformNavHost(
                         apps = apps,
                         onBack = popBackStack,
                         onPinnedComponentsChange = onPinnedComponentsChange,
+                        onInnerPinnedComponentsChange = onInnerPinnedComponentsChange,
                     )
                 }
             },

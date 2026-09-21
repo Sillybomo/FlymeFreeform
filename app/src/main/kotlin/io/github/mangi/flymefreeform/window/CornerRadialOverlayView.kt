@@ -813,13 +813,13 @@ internal class CornerRadialOverlayView(
         if (!panelModeState.value && !dismissing) updateGestureFromLatestPoint()
     }
 
-    /** 外圈应用：固定顺序的前 OUTER_PINNED_APPS 个。 */
+    /** 外圈应用：目录顺序的前 outerCount 个（由配置决定，见 AppCatalogSnapshot.outerCount）。 */
     private fun outerApps(): List<RadialAppEntry> =
-        catalog.radialApps.take(io.github.mangi.flymefreeform.config.ModulePreferences.OUTER_PINNED_APPS)
+        catalog.radialApps.take(catalog.outerCount)
 
-    /** 内圈应用：外圈放不下（超过 OUTER_PINNED_APPS）的部分。 */
+    /** 内圈应用：外圈之后的部分。 */
     private fun innerApps(): List<RadialAppEntry> =
-        catalog.radialApps.drop(io.github.mangi.flymefreeform.config.ModulePreferences.OUTER_PINNED_APPS)
+        catalog.radialApps.drop(catalog.outerCount)
 
     /**
      * 合并布局下标 → 应用下标（[catalog.radialApps] 内）；返回 null 表示「更多」槽。

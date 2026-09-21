@@ -78,6 +78,16 @@ internal class FrameworkConnectionRepository {
     fun setPauseInGameMode(enabled: Boolean) =
         updateSettings { it.copy(pauseInGameMode = enabled) }
 
+    /** 写入内圈固定应用（独立的第二圈，上限 MAX_INNER_APPS）。 */
+    fun setInnerPinnedComponents(components: List<ComponentName>) =
+        updateSettings { settings ->
+            settings.copy(
+                innerPinsSaved = true,
+                innerPinnedComponents =
+                    components.distinct().take(ModulePreferences.MAX_INNER_APPS),
+            )
+        }
+
     fun setPinnedComponents(components: List<ComponentName>) =        updateSettings {
             it.copy(
                 pinsSaved = true,

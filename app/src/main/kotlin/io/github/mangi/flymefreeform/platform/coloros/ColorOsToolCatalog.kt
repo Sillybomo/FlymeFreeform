@@ -45,7 +45,32 @@ internal class ColorOsToolCatalog(
     fun build(): List<ToolCatalogCodec.Record> {
         val instance = ensureHelper() ?: return emptyList()
         val tools = readTools(instance) ?: return emptyList()
+        cacheEntryBeans()
         return tools.mapNotNull { tool -> toRecord(tool) }
+    }
+
+    /** alias → 原厂 EntryBean 缓存；执行时优先走 startSysTool 原厂路径。 */
+    private val entryBeansByAlias = mutableMapOf<String, Any>()
+
+    /** 把原厂工具条目列表按别名建立索引（工具条目的 activity 字段即别名）。 */
+    private fun cacheEntryBeans() {
+        try {
+            val helperClass = loader.loadClass(ENTRY_HELPER_CLASS)
+            val helper = helperClass.getMethod("getActiveInstance").invoke(null) ?: return
+            listOf("getShownTools", "getAllAppListForTool").forEach { name ->
+                val list =
+                    runCatching { helperClass.getMethod(name).invoke(helper) as? List<*> }.getOrNull()
+                        ?: return@forEach
+                list.filterNotNull().forEach { bean ->
+                    runCatching {
+                        val alias = bean.javaClass.getMethod("getActivity").invoke(bean) as? String
+                        if (!alias.isNullOrEmpty()) entryBeansByAlias[alias] = bean
+                    }
+                }
+            }
+        } catch (exception: Exception) {
+            log(Log.WARN, "TOOL_BEAN_CACHE_FAILED", unwrap(exception))
+        }
     }
 
     /**
@@ -59,10 +84,17 @@ internal class ColorOsToolCatalog(
      * @param alias [build] 导出的别名
      * @return 是否成功调用到执行入口
      */
-    fun run(alias: String): Boolean {
+    fun run(alias: String, clickX: Float, clickY: Float): Boolean {
         val instance = ensureHelper() ?: return false
-        // 1) 原厂路径：从工具条目列表里找该别名的 EntryBean，交给 PageRoutUtils。
-        val bean = findToolBean(instance, alias)
+        // 0) PageRout 坐标记账：识屏等工具依赖点击坐标，扇形触发时传手势位置。
+        try {
+            pageRoutClass.getMethod("setENTRY_CLICK_X", Float::class.javaPrimitiveType).invoke(null, clickX)
+            pageRoutClass.getMethod("setENTRY_CLICK_Y", Float::class.javaPrimitiveType).invoke(null, clickY)
+        } catch (exception: Exception) {
+            log(Log.WARN, "TOOL_PAGE_ROUT_COORDS_FAILED", unwrap(exception))
+        }
+        // 1) 原厂路径：用缓存的 EntryBean 交给 PageRoutUtils.startSysTool。
+        val bean = entryBeansByAlias[alias] ?: findToolBean(instance, alias)
         if (bean != null) {
             try {
                 pageRoutClass
