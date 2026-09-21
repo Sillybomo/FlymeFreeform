@@ -22,7 +22,9 @@ class FlymeFreeformApplication : Application() {
         super.onCreate()
         frameworkConnectionRepository = FrameworkConnectionRepository().also { it.start() }
         launcherAppRepository =
-            LauncherAppRepository(this) { SharedSettings.readToolCatalog(this) ?: frameworkConnectionRepository.readToolCatalog() }
+            // 远端配置（App 落盘，带 72px WEBP 图标）优先；Settings.Global 只有去图标
+            // 文本副本（单值上限 32KB，实测带图标被拒），作框架未连接时的兜底。
+            LauncherAppRepository(this) { frameworkConnectionRepository.readToolCatalog() ?: SharedSettings.readToolCatalog(this) }
                 .also { it.refresh() }
         // 侧边栏工具目录要等框架连上后才可读：连接状态变化时重算工具区（目录未变则走缓存）。
         scope.launch {

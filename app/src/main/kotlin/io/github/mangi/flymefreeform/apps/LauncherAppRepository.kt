@@ -114,14 +114,19 @@ internal class LauncherAppRepository(
 
     private fun publish() {
         val catalog = runCatching { toolCatalog() }.getOrNull()
-        if (catalog.isNullOrEmpty() && shouldRequestTools()) {
+        // 目录缺失、或目录有可用工具却一枚图标都没有（旧版无图标残留）都重新索要；
+        // system_server 回包后经 SharedStateReceiver 落盘并立即 refreshTools。
+        val needsCatalog =
+            catalog.isNullOrEmpty() ||
+                ToolCatalogCodec.decode(catalog).any { it.available && it.iconPng != null }.not()
+        if (needsCatalog && shouldRequestTools()) {
             // 目录缺失：向 system_server 索要（App 打开设置时主动拉一次，绕开冷启动延迟）。
             runCatching {
                 context.sendBroadcast(Intent(SharedStateProtocol.ACTION_REQUEST_TOOLS))
                 // system_server 收到请求后写 Settings.Global，这里延迟重读两次把目录捡回来。
                 val handler = android.os.Handler(android.os.Looper.getMainLooper())
                 for (delay in longArrayOf(600L, 1_800L)) {
-                    handler.postDelayed({ worker.execute { publish() } }, delay)
+                    handler.postDelayed({ worker.execute { publish() }, delay)
                 }
             }
         }

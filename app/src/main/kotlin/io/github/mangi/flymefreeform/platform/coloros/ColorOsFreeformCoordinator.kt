@@ -474,7 +474,7 @@ internal class ColorOsFreeformCoordinator(
      */
     /**
      * App 打开设置时会广播索要工具目录（被动中继可能赶上 App 冷启动被厂商启动策略延迟），
-     * 这里注册接收器：收到请求就重写一次 Settings.Global（App 侧轮询重读）。
+     * 这里注册接收器：收到请求就回发一次目录广播并刷新 Settings 文本副本。
      */
     private fun registerToolRequestReceiver() {
         try {
@@ -487,7 +487,8 @@ internal class ColorOsFreeformCoordinator(
                             sidebar.requestToolCatalog()
                             return
                         }
-                        SharedSettings.writeToolCatalog(context, shrinkIcons(cached))
+                        SharedSettings.writeToolCatalog(context, stripIcons(cached))
+                        broadcastToolCatalog(shrinkIcons(cached))
                         logger(Log.INFO, "TOOL_CATALOG_SERVED", null)
                     }
                 },
@@ -499,18 +500,47 @@ internal class ColorOsFreeformCoordinator(
     }
 
     /**
-     * 收到侧边栏目录：内存留全量（含图标，供扇形渲染），Settings.Global 写去图标版
-     * （供设置界面读取；广播通道在 ColorOS 上不可靠，已弃用）。
+     * 收到侧边栏目录：内存留全量（含图标，供扇形渲染）。
+     *
+     * 下行分两路（Settings.Global 单值实测上限 32KB，带图标目录约 60-110KB 必被拒）：
+     * - Settings 写**去图标文本版**（约 700B，稳定），作低配兜底；
+     * - 定向广播**压缩图标版**（72px WEBP）给 App 落远端配置——system_server 发出的
+     *   广播不受厂商后台启动管控拦截（实测侧边栏进程直发会被拦），App 端选择应用
+     *   界面的图标从此读取。
      */
     private fun publishToolCatalogToApp(catalog: String) {
         latestToolCatalog = catalog
-        SharedSettings.writeToolCatalog(context, shrinkIcons(catalog))
+        SharedSettings.writeToolCatalog(context, stripIcons(catalog))
+        broadcastToolCatalog(shrinkIcons(catalog))
         logger(Log.INFO, "TOOL_CATALOG_RELAYED", null)
     }
 
+    /** Settings 侧目录副本：去图标纯文本（`Settings.Global` 单值上限 32KB，实测 60KB 被拒）。 */
+    private fun stripIcons(catalog: String): String =
+        ToolCatalogCodec.encode(
+            ToolCatalogCodec.decode(catalog).map { record -> record.copy(iconPng = null) },
+        )
+
+    /** 定向广播目录给模块 App（setPackage 显式指定），App 收到后落远端配置。 */
+    private fun broadcastToolCatalog(catalog: String) {
+        runCatching {
+            context.sendBroadcast(
+                Intent(SharedStateProtocol.ACTION)
+                    .setPackage(SharedStateProtocol.MODULE_PACKAGE)
+                    .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+                    .putExtra(SharedStateProtocol.EXTRA_KIND, SharedStateProtocol.KIND_TOOL_CATALOG)
+                    .putExtra(SharedStateProtocol.EXTRA_CATALOG, catalog),
+            )
+        }.onSuccess {
+            logger(Log.INFO, "TOOL_CATALOG_BROADCAST", null)
+        }.onFailure { exception ->
+            logger(Log.WARN, "TOOL_CATALOG_BROADCAST_FAILED", exception)
+        }
+    }
+
     /**
-     * 设置侧的目录副本压缩：图标统一压到 72px WEBP（每枚约 2-3KB，总量 60KB 级），
-     * Settings 单值可以承受；不能直接去掉图标 —— 设置界面的工具条目要显示图标。
+     * 广播侧的目录副本压缩：图标统一压到 72px WEBP（每枚约 2-3KB，总量 60-110KB），
+     * 广播 Intent 与 App 侧远端配置（SharedPreferences）均可承载。
      */
     private fun shrinkIcons(catalog: String): String =
         ToolCatalogCodec.encode(
