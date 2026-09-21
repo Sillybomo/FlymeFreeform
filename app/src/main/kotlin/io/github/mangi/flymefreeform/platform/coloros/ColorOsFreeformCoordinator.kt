@@ -17,6 +17,9 @@ import android.view.MotionEvent
 import android.view.ViewConfiguration
 import android.view.WindowManager
 import io.github.mangi.flymefreeform.config.ModulePreferences
+import io.github.mangi.flymefreeform.config.SharedSettings
+import java.util.ArrayDeque
+import io.github.mangi.flymefreeform.config.ToolCatalogCodec
 import io.github.mangi.flymefreeform.config.ModuleSettingsSnapshot
 import io.github.mangi.flymefreeform.config.SharedStateProtocol
 import io.github.mangi.flymefreeform.gesture.AdaptiveCornerGestureConfig
@@ -59,6 +62,9 @@ internal class ColorOsFreeformCoordinator(
     @Volatile
     private var latestToolCatalog: String? = null
 
+    /** 最近小窗内存列表（头部最新）；跨重启由配置播种，跨进程由 Settings.Global 供读。 */
+    private val recentFreeformEntries = ArrayDeque<ComponentName>()
+
     private val appCatalog =
         ColorOsAppCatalog(
             context,
@@ -78,6 +84,9 @@ internal class ColorOsFreeformCoordinator(
         // 侧边栏直发 App 的广播会被 ColorOS 后台启动管控拦截，改经 system_server 转发。
         sidebar.onToolCatalog = ::publishToolCatalogToApp
         // 「最近小窗」点击：侧边栏无法自建小窗，转回 system_server 走既有启动链路。
+        sidebar.onRecentComponent = { component ->
+            handler.post { publishRecentFreeform(component) }
+        }
         sidebar.onLaunchComponent = { component ->
             handler.post {
                 if (isGestureEnvironmentAllowed()) {
@@ -113,6 +122,7 @@ internal class ColorOsFreeformCoordinator(
 
     fun start() {
         handler.post {
+            recentFreeformEntries.addAll(configuration.readRecentFreeform())
             registerToolRequestReceiver()
             environmentState.start(context)
             environmentState.observe { applySettings(configuration.snapshot) }
@@ -442,14 +452,17 @@ internal class ColorOsFreeformCoordinator(
      */
     /**
      * App 打开设置时会广播索要工具目录（被动中继可能赶上 App 冷启动被厂商启动策略延迟），
-     * 这里注册接收器：收到请求就把手头的目录再广播一次。
+     * 这里注册接收器：收到请求就重写一次 Settings.Global（App 侧轮询重读）。
      */
     private fun registerToolRequestReceiver() {
         try {
             context.registerReceiver(
                 object : BroadcastReceiver() {
                     override fun onReceive(receiverContext: Context?, intent: Intent?) {
-                        latestToolCatalog?.let(::publishToolCatalogToApp)
+                        latestToolCatalog?.let { catalog ->
+                            SharedSettings.writeToolCatalog(context, stripIcons(catalog))
+                            logger(Log.INFO, "TOOL_CATALOG_SERVED", null)
+                        }
                     }
                 },
                 IntentFilter(SharedStateProtocol.ACTION_REQUEST_TOOLS),
@@ -459,35 +472,33 @@ internal class ColorOsFreeformCoordinator(
         }
     }
 
+    /**
+     * 收到侧边栏目录：内存留全量（含图标，供扇形渲染），Settings.Global 写去图标版
+     * （供设置界面读取；广播通道在 ColorOS 上不可靠，已弃用）。
+     */
     private fun publishToolCatalogToApp(catalog: String) {
         latestToolCatalog = catalog
-        try {
-            context.sendBroadcast(
-                Intent(SharedStateProtocol.ACTION)
-                    .setPackage(SharedStateProtocol.MODULE_PACKAGE)
-                    .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
-                    .putExtra(SharedStateProtocol.EXTRA_KIND, SharedStateProtocol.KIND_TOOL_CATALOG)
-                    .putExtra(SharedStateProtocol.EXTRA_CATALOG, catalog),
-            )
-            logger(Log.INFO, "TOOL_CATALOG_RELAYED", null)
-        } catch (exception: Exception) {
-            logger(Log.WARN, "TOOL_CATALOG_RELAY_FAILED", exception)
-        }
+        SharedSettings.writeToolCatalog(context, stripIcons(catalog))
+        logger(Log.INFO, "TOOL_CATALOG_RELAYED", null)
     }
 
+    /** 图标 base64 占目录体积的大头，设置侧不需要；去掉后单条 Settings 值降到几 KB。 */
+    private fun stripIcons(catalog: String): String =
+        ToolCatalogCodec.encode(
+            ToolCatalogCodec.decode(catalog).map { record -> record.copy(iconPng = null) },
+        )
+
+    /**
+     * 记录「小窗打开」：内存列表即时更新，Settings.Global 供侧边栏面板实时读取
+     * （跨进程广播在 ColorOS 上会被启动管控/延迟策略干扰，已弃用）。
+     */
     private fun publishRecentFreeform(component: ComponentName) {
-        try {
-            context.sendBroadcast(
-                Intent(SharedStateProtocol.ACTION)
-                    .setPackage(SharedStateProtocol.MODULE_PACKAGE)
-                    // App 装完处于 stopped 状态时普通广播不会唤醒它，必须显式包含。
-                    .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
-                    .putExtra(SharedStateProtocol.EXTRA_KIND, SharedStateProtocol.KIND_RECENT_FREEFORM)
-                    .putExtra(SharedStateProtocol.EXTRA_COMPONENT, component.flattenToString()),
-            )
-        } catch (exception: Exception) {
-            logger(Log.WARN, "RECENT_FREEFORM_PUBLISH_FAILED", exception)
+        recentFreeformEntries.remove(component)
+        recentFreeformEntries.addFirst(component)
+        while (recentFreeformEntries.size > ModulePreferences.MAX_RECENT_FREEFORM) {
+            recentFreeformEntries.removeLast()
         }
+        SharedSettings.writeRecentFreeform(context, recentFreeformEntries.toList())
     }
 
     override fun onMorePanelRequested() {

@@ -59,6 +59,9 @@ internal class ColorOsSidebarClient(
     /** 「最近小窗」点击转小窗启动（侧边栏进程无法自建小窗）。 */
     var onLaunchComponent: ((ComponentName) -> Unit)? = null
 
+    /** 面板条目点击 → 记入「最近小窗」。 */
+    var onRecentComponent: ((ComponentName) -> Unit)? = null
+
     fun open(
         beforeOpen: () -> Boolean, onResult: (Outcome) -> Unit,
         onExitStarted: () -> Unit, onHideBackdrop: (() -> Unit) -> Unit, onClosed: () -> Unit,
@@ -188,6 +191,14 @@ internal class ColorOsSidebarClient(
     }
 
     private fun receive(message: Message): Boolean {
+        // 免会话消息（目录载荷 / 小窗启动与记录请求）先于会话校验处理。
+        if (message.what == SidebarProtocol.RECORD_RECENT && message.arg1 == SidebarProtocol.VERSION) {
+            val component = message.peekData()
+                ?.getString(SidebarProtocol.RECORD_RECENT_EXTRA)
+                ?.let(ComponentName::unflattenFromString)
+            if (component != null) handler.post { onRecentComponent?.invoke(component) }
+            return true
+        }
         // 免会话消息（目录载荷 / 小窗启动请求）先于会话校验处理。
         if (message.what == SidebarProtocol.LAUNCH_COMPONENT && message.arg1 == SidebarProtocol.VERSION) {
             val flat = message.peekData()?.getString(SidebarProtocol.LAUNCH_COMPONENT_EXTRA)

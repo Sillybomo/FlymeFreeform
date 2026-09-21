@@ -118,6 +118,11 @@ internal class LauncherAppRepository(
             // 目录缺失：向 system_server 索要（App 打开设置时主动拉一次，绕开冷启动延迟）。
             runCatching {
                 context.sendBroadcast(Intent(SharedStateProtocol.ACTION_REQUEST_TOOLS))
+                // system_server 收到请求后写 Settings.Global，这里延迟重读两次把目录捡回来。
+                val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                for (delay in longArrayOf(600L, 1_800L)) {
+                    handler.postDelayed({ worker.execute { publish() } }, delay)
+                }
             }
         }
         if (catalog != cachedCatalog) {

@@ -20,6 +20,7 @@ import android.os.UserManager
 import android.provider.Settings
 import android.util.Log
 import io.github.mangi.flymefreeform.config.ModuleSettingsSnapshot
+import io.github.mangi.flymefreeform.config.SharedSettings
 import io.github.mangi.flymefreeform.config.SharedStateProtocol
 import io.github.mangi.flymefreeform.config.ToolCatalogCodec
 import io.github.mangi.flymefreeform.hook.ProcessConfiguration
@@ -269,7 +270,16 @@ internal class ColorOsAllAppsEndpoint(
         watchingConfiguration = true
         next.content = ColorOsAllAppsContent(
             loader,
-            recentFreeform = { configuration.readRecentFreeform() },
+            recentFreeform = { SharedSettings.readRecentFreeform(service) },
+            onRecentCandidate = { component ->
+                request?.reply?.let { reply ->
+                    runCatching {
+                        reply.send(
+                            SidebarProtocol.recordRecentMessage(component.flattenToString(), Process.SYSTEM_UID),
+                        )
+                    }
+                }
+            },
             onLaunchComponent = { component ->
                 // 「最近小窗」点击：侧边栏无法自建小窗，交回 system_server 启动。
                 request?.reply?.let { reply ->

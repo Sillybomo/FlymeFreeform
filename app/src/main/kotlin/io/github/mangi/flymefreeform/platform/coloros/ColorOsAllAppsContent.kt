@@ -25,6 +25,8 @@ internal class ColorOsAllAppsContent(
     private val recentFreeform: () -> List<ComponentName> = { emptyList() },
     /** 「最近小窗」点击的启动回调（侧边栏进程无法自建小窗，交回 system_server）。 */
     private val onLaunchComponent: (ComponentName) -> Unit = {},
+    /** 面板里点开的应用回调（计入「最近小窗」）。 */
+    private val onRecentCandidate: (ComponentName) -> Unit = {},
     private val log: (Int, String, Throwable?) -> Unit = { _, _, _ -> },
 ) {
     private val allClass = loader.loadClass(ALL_CLASS)
@@ -239,6 +241,17 @@ internal class ColorOsAllAppsContent(
                             val key = getKey.call(data)
                             val entry = getEntry.call(data)
                             val tool = entry != null && getType.call(entry) == 0
+                            if (!tool) {
+                                // 应用条目：计入「最近小窗」（工具不是应用，不记）。
+                                runCatching {
+                                    val beanClass = entry?.javaClass
+                                    val pkg = beanClass?.getMethod("getPkg")?.invoke(entry) as? String
+                                    val activity = beanClass?.getMethod("getActivity")?.invoke(entry) as? String
+                                    if (!pkg.isNullOrEmpty() && !activity.isNullOrEmpty()) {
+                                        onRecentCandidate(ComponentName(pkg, activity))
+                                    }
+                                }
+                            }
                             onClick(tool) {
                                 // 动画期间目录可能刷新，执行前按原条目标识重新定位，不能复用旧索引。
                                 val current = getData.call(search) as? List<*>

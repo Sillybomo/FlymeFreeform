@@ -45,6 +45,13 @@ internal object SidebarProtocol {
      */
     const val LAUNCH_COMPONENT = 20
     const val LAUNCH_COMPONENT_EXTRA = "launch_component"
+
+    /**
+     * 面板条目点击记录：用户在「全部」面板里点开的应用同样计入「最近小窗」。
+     * 侧边栏只上报组件名，是否记录（去重/截断/落盘）由 system_server 决定。
+     */
+    const val RECORD_RECENT = 21
+    const val RECORD_RECENT_EXTRA = "record_recent"
     const val REQUEST_ID = "request_id"
     const val DEADLINE = "deadline_uptime"
     const val TARGET_UID = "target_uid"
@@ -95,6 +102,18 @@ internal object SidebarProtocol {
             data =
                 Bundle().apply {
                     putString(TOOL_ALIAS, alias)
+                    putInt(TARGET_UID, targetUid)
+                }
+        }
+
+    /** 面板点击记录消息：侧边栏 → system_server，免会话方向。 */
+    fun recordRecentMessage(component: String, targetUid: Int): Message =
+        Message.obtain().apply {
+            what = RECORD_RECENT
+            arg1 = VERSION
+            data =
+                Bundle().apply {
+                    putString(RECORD_RECENT_EXTRA, component)
                     putInt(TARGET_UID, targetUid)
                 }
         }
