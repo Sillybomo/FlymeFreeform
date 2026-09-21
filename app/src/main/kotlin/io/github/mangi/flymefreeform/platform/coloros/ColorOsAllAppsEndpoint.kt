@@ -270,6 +270,16 @@ internal class ColorOsAllAppsEndpoint(
         next.content = ColorOsAllAppsContent(
             loader,
             recentFreeform = { configuration.readRecentFreeform() },
+            onLaunchComponent = { component ->
+                // 「最近小窗」点击：侧边栏无法自建小窗，交回 system_server 启动。
+                request?.reply?.let { reply ->
+                    runCatching {
+                        reply.send(
+                            SidebarProtocol.launchComponentMessage(component.flattenToString(), Process.SYSTEM_UID),
+                        )
+                    }
+                }
+            },
             log = log,
         )
         // 每次面板打开都重发：App 可能在上一次发布时还没起来（装完是 stopped 态），

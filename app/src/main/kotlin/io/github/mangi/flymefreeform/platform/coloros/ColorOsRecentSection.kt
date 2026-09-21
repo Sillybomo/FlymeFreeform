@@ -15,17 +15,19 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import io.github.mangi.flymefreeform.config.ModulePreferences
+import java.util.ArrayDeque
 
 /**
  * 「全部」面板的「最近小窗」区块。
  *
- * 数据由 system_server 侧在每次小窗启动成功后写入框架远端配置（[ModulePreferences.KEY_RECENT_FREEFORM]），
- * 本区块在侧边栏进程渲染，插到原生 `app_list` 之前，因此不改动原厂适配器与列表状态机。
- * 点击复用原厂点击路径（EntryBean → AppLabelData → AllAppDataHandlerImpl.onAppItemClicked）。
+ * 数据由 system_server 侧在每次小窗启动成功后经模块 App 落盘
+ * （[ModulePreferences.KEY_RECENT_FREEFORM]），本区块在侧边栏进程渲染，
+ * 插到原生 `app_list` 之前，不改动原厂适配器与列表状态机。
+ * 点击经会话通道交回 system_server 走既有小窗启动链路（侧边栏进程无法自建小窗）。
  *
  * @author bomo
  * @param context 侧边栏主题 Context（与原厂面板同源）
- * @param loader 侧边栏 ClassLoader，用于反射原厂点击链路
+ * @param loader 侧边栏 ClassLoader
  * @param log 诊断日志（失败只降级不崩溃）
  */
 internal class ColorOsRecentSection(
@@ -34,25 +36,25 @@ internal class ColorOsRecentSection(
     private val log: (Int, String, Throwable?) -> Unit,
 ) {
     private val launcherApps = context.getSystemService(LauncherApps::class.java)
-    private var clicker: NativeClicker? = null
-    private var clickUnavailableLogged = false
+    private var nativeTitleColor: Int? = null
 
     /**
      * 把区块插入面板容器。
      *
      * @param panelView 原厂面板根视图（layout_all_app 的宿主）
      * @param recents 最近小窗应用，最近的在前
+     * @param onLaunchComponent 点击条目后的小窗启动回调（交回 system_server）
      * @param onItemClicked 点击后关闭模块窗口的回调
      * @return 是否插入成功（无数据、结构不符或异常时返回 false）
      */
     fun attach(
         panelView: View,
         recents: List<ComponentName>,
+        onLaunchComponent: (ComponentName) -> Unit,
         onItemClicked: () -> Unit,
     ): Boolean {
         val items = recents.take(ModulePreferences.MAX_RECENT_FREEFORM)
         if (items.isEmpty()) return false
-        Log.i(TAG, "RECENT_SECTION_BUILD count=${items.size}")
         return try {
             val container =
                 panelView.findViewById<ViewGroup>(resourceId(CONTAINER_ID, "id"))
@@ -69,7 +71,7 @@ internal class ColorOsRecentSection(
             val index = container.indexOfChild(appList).coerceAtLeast(0)
             val resolved = items.mapNotNull { component -> resolve(component) }
             if (resolved.isEmpty()) return false
-            val strip = buildStrip(resolved, onItemClicked)
+            val strip = buildStrip(panelView, resolved, onLaunchComponent, onItemClicked)
             container.addView(
                 strip,
                 index,
@@ -106,10 +108,12 @@ internal class ColorOsRecentSection(
         }
 
     private fun buildStrip(
+        panelView: View,
         items: List<RecentItem>,
+        onLaunchComponent: (ComponentName) -> Unit,
         onItemClicked: () -> Unit,
     ): View {
-        val textColor = themeColor()
+        val textColor = themeColor(panelView)
         val column =
             LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -130,10 +134,13 @@ internal class ColorOsRecentSection(
                 setPadding(dp(10f), 0, dp(10f), 0)
             }
         items.forEach { item ->
-            row.addView(buildItem(item, textColor) {
-                onClick(item.component)
-                onItemClicked()
-            })
+            row.addView(
+                buildItem(item, textColor) {
+                    // 侧边栏进程无法自建小窗：经会话通道交回 system_server 启动。
+                    onLaunchComponent(item.component)
+                    onItemClicked()
+                },
+            )
         }
         column.addView(
             HorizontalScrollView(context).apply {
@@ -192,57 +199,42 @@ internal class ColorOsRecentSection(
         return holder
     }
 
-    /** 复用原厂点击链路；链路不可用时只打一次诊断码，不影响区块展示。 */
-    private fun onClick(component: ComponentName) {
-        val target = clicker ?: createClicker()?.also { clicker = it }
-        if (target == null) {
-            if (!clickUnavailableLogged) {
-                clickUnavailableLogged = true
-                log(Log.WARN, "RECENT_SECTION_CLICK_UNAVAILABLE", null)
-            }
-            return
+    /**
+     * 文字颜色：优先抄原厂标题「全部」的 TextView 颜色（随主题/夜间模式自动一致），
+     * 找不到再退回主题属性，最后退回黑色。
+     */
+    private fun themeColor(panelView: View): Int {
+        nativeTitleColor?.let { return it }
+        findNativeTitleColor(panelView)?.let { color ->
+            nativeTitleColor = color
+            return color
         }
-        try {
-            if (!target.click(component)) {
-                log(Log.WARN, "RECENT_SECTION_TARGET_NOT_IN_CATALOG ${component.flattenToString()}", null)
-            }
-        } catch (exception: Exception) {
-            log(Log.WARN, "RECENT_SECTION_CLICK_FAILED", exception)
-        }
-    }
-
-    private fun createClicker(): NativeClicker? =
-        try {
-            val entryHelperClass = loader.loadClass(ENTRY_HELPER_CLASS)
-            val activeInstance = entryHelperClass.getMethod("getActiveInstance").invoke(null)
-                ?: entryHelperClass.getMethod("createAndGetInstance").invoke(null)
-                ?: return null
-            val lists =
-                listOf("getAllAppListLocal", "getAllAppListForApp", "getShownApps")
-                    .mapNotNull { name ->
-                        runCatching { entryHelperClass.getMethod(name).invoke(activeInstance) as? List<*> }
-                            .getOrNull()
-                    }
-            NativeClicker(
-                loader = loader,
-                entryBeans = lists.flatten().filterNotNull(),
-                log = log,
-            )
-        } catch (exception: Exception) {
-            log(Log.WARN, "RECENT_SECTION_CATALOG_UNAVAILABLE", exception)
-            null
-        }
-
-    private fun themeColor(): Int {
         val id = resourceId(COLOR_ATTR, "attr")
         val value = TypedValue()
-        return if (id != 0 && context.theme.resolveAttribute(id, value, true) &&
+        if (id != 0 && context.theme.resolveAttribute(id, value, true) &&
             value.type >= TypedValue.TYPE_FIRST_COLOR_INT && value.type <= TypedValue.TYPE_LAST_COLOR_INT
         ) {
-            value.data
-        } else {
-            DEFAULT_TEXT_COLOR
+            return value.data
         }
+        return DEFAULT_TEXT_COLOR
+    }
+
+    private fun findNativeTitleColor(panelView: View): Int? {
+        if (panelView !is ViewGroup) return null
+        val queue = ArrayDeque<View>()
+        queue.add(panelView)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < 64) {
+            visited++
+            val node = queue.removeFirst()
+            if (node is TextView && node.text?.toString() == NATIVE_TITLE_TEXT) {
+                return node.currentTextColor
+            }
+            if (node is ViewGroup) {
+                for (index in 0 until node.childCount) queue.add(node.getChildAt(index))
+            }
+        }
+        return null
     }
 
     private fun dp(value: Float): Int = (value * context.resources.displayMetrics.density).toInt()
@@ -253,40 +245,6 @@ internal class ColorOsRecentSection(
     private fun resourceId(name: String, type: String): Int =
         context.resources.getIdentifier(name, type, ColorOsSidebarTarget.PACKAGE_NAME)
 
-    /**
-     * 用原厂 EntryBeanHelper 的条目构造 AppLabelData，并走原厂 onAppItemClicked，
-     * 使「最近小窗」的点击与原厂面板条目完全同路径。
-     */
-    private class NativeClicker(
-        loader: ClassLoader,
-        private val entryBeans: List<Any>,
-        private val log: (Int, String, Throwable?) -> Unit,
-    ) {
-        private val dataClass = loader.loadClass(DATA_CLASS)
-        private val dataCtor = dataClass.getConstructor(entryBeanClass(loader))
-        private val pkgGetter = dataCtor.parameterTypes[0].getMethod("getPkg")
-        private val activityGetter = dataCtor.parameterTypes[0].getMethod("getActivity")
-        private val handlerClass = loader.loadClass(HANDLER_CLASS)
-        private val handler = handlerClass.getField("INSTANCE").get(null)
-        private val clickMethod = handlerClass.getMethod("onAppItemClicked", dataClass, Boolean::class.javaPrimitiveType)
-
-        fun click(component: ComponentName): Boolean {
-            val bean =
-                entryBeans.firstOrNull { candidate ->
-                    (pkgGetter.invoke(candidate) as? String) == component.packageName &&
-                        (activityGetter.invoke(candidate) as? String) == component.className
-                } ?: return false
-            val labelData = dataCtor.newInstance(bean)
-            clickMethod.invoke(handler, labelData, false)
-            return true
-        }
-
-        private companion object {
-            fun entryBeanClass(loader: ClassLoader): Class<*> =
-                loader.loadClass("com.oplus.smartsidebar.panelview.edgepanel.data.entrybeans.models.beans.EntryBean")
-        }
-    }
-
     private companion object {
         const val TAG = "FlymeFreeform"
 
@@ -296,18 +254,14 @@ internal class ColorOsRecentSection(
         /** 原厂应用/工具列表；区块插在它之前。 */
         const val APP_LIST_ID = "app_list"
 
-        const val ENTRY_HELPER_CLASS =
-            "com.oplus.smartsidebar.panelview.edgepanel.data.entrybeans.EntryBeanHelper"
-
-        const val DATA_CLASS = "com.oplus.smartsidebar.panelview.edgepanel.data.AppLabelData"
-
-        const val HANDLER_CLASS =
-            "com.oplus.smartsidebar.panelview.edgepanel.data.viewdatahandlers.AllAppDataHandlerImpl"
-
-        /** 与原厂面板标题同源的主题色属性。 */
+        /** 与原厂面板标题同源的主题色属性（取不到原厂标题颜色时的回退）。 */
         const val COLOR_ATTR = "couiColorPrimaryTextOnPopup"
 
         const val HEADER_TEXT = "最近小窗"
+
+        /** 原厂面板标题文本，用于定位其 TextView 颜色。 */
+        const val NATIVE_TITLE_TEXT = "全部"
+
         const val HEADER_TEXT_SP = 13f
         const val LABEL_TEXT_SP = 11f
         const val ICON_SIZE_DP = 46

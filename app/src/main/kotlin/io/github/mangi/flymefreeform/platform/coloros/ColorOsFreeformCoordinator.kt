@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.os.Handler
@@ -55,12 +56,15 @@ internal class ColorOsFreeformCoordinator(
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     private val launcher = ColorOsFreeformLauncher(context)
     private val sidebar = ColorOsSidebarClient(context, handler, logger)
+    @Volatile
+    private var latestToolCatalog: String? = null
+
     private val appCatalog =
         ColorOsAppCatalog(
             context,
             catalogExecutor,
             logger,
-            toolCatalog = { configuration.readToolCatalog() },
+            toolCatalog = { latestToolCatalog ?: configuration.readToolCatalog() },
         ) { snapshot ->
             handler.post {
                 // 后台任务完成时配置可能已再次变化，旧结果不得覆盖新外观。
@@ -73,6 +77,14 @@ internal class ColorOsFreeformCoordinator(
     init {
         // 侧边栏直发 App 的广播会被 ColorOS 后台启动管控拦截，改经 system_server 转发。
         sidebar.onToolCatalog = ::publishToolCatalogToApp
+        // 「最近小窗」点击：侧边栏无法自建小窗，转回 system_server 走既有启动链路。
+        sidebar.onLaunchComponent = { component ->
+            handler.post {
+                if (isGestureEnvironmentAllowed()) {
+                    launchCommittedApp(RadialAppEntry(component, component.className, EMPTY_ICON))
+                }
+            }
+        }
     }
 
     private val packageReceiver =
@@ -101,6 +113,7 @@ internal class ColorOsFreeformCoordinator(
 
     fun start() {
         handler.post {
+            registerToolRequestReceiver()
             environmentState.start(context)
             environmentState.observe { applySettings(configuration.snapshot) }
             registerPackageObserver()
@@ -427,7 +440,27 @@ internal class ColorOsFreeformCoordinator(
      * system_server 发出的广播不受厂商「后台启动管控」限制（实测侧边栏进程会被拦），
      * App 收到后落盘，设置界面的工具列表与扇形的工具图标都读这份数据。
      */
+    /**
+     * App 打开设置时会广播索要工具目录（被动中继可能赶上 App 冷启动被厂商启动策略延迟），
+     * 这里注册接收器：收到请求就把手头的目录再广播一次。
+     */
+    private fun registerToolRequestReceiver() {
+        try {
+            context.registerReceiver(
+                object : BroadcastReceiver() {
+                    override fun onReceive(receiverContext: Context?, intent: Intent?) {
+                        latestToolCatalog?.let(::publishToolCatalogToApp)
+                    }
+                },
+                IntentFilter(SharedStateProtocol.ACTION_REQUEST_TOOLS),
+            )
+        } catch (exception: Exception) {
+            logger(Log.WARN, "TOOL_REQUEST_RECEIVER_FAILED", exception)
+        }
+    }
+
     private fun publishToolCatalogToApp(catalog: String) {
+        latestToolCatalog = catalog
         try {
             context.sendBroadcast(
                 Intent(SharedStateProtocol.ACTION)
@@ -639,6 +672,9 @@ internal class ColorOsFreeformCoordinator(
     private data class QueuedPointerEvent(val event: MotionEvent, val generation: Long)
 
     private companion object {
+        /** 小窗启动链路不使用图标，占位 1x1 即可。 */
+        val EMPTY_ICON = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+
         const val CATALOG_THREAD_NAME = "FlymeFreeform-Catalog"
         const val OVERLAY_FAILURE_LOG_INTERVAL_MS = 10_000L
         val CRITICAL_PACKAGES =

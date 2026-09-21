@@ -13,7 +13,9 @@ import android.graphics.Paint
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Process
+import android.os.SystemClock
 import io.github.mangi.flymefreeform.config.ModulePreferences
+import io.github.mangi.flymefreeform.config.SharedStateProtocol
 import io.github.mangi.flymefreeform.config.ToolCatalogCodec
 import java.text.Collator
 import java.util.Locale
@@ -112,6 +114,12 @@ internal class LauncherAppRepository(
 
     private fun publish() {
         val catalog = runCatching { toolCatalog() }.getOrNull()
+        if (catalog.isNullOrEmpty() && shouldRequestTools()) {
+            // 目录缺失：向 system_server 索要（App 打开设置时主动拉一次，绕开冷启动延迟）。
+            runCatching {
+                context.sendBroadcast(Intent(SharedStateProtocol.ACTION_REQUEST_TOOLS))
+            }
+        }
         if (catalog != cachedCatalog) {
             cachedCatalog = catalog
             cachedTools = decodeTools(catalog)
@@ -138,6 +146,14 @@ internal class LauncherAppRepository(
                 }
             }
 
+    /** 索要目录的节流：10 秒内只发一次，避免目录始终缺失时打爆广播。 */
+    private fun shouldRequestTools(): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastToolRequestAt < TOOL_REQUEST_INTERVAL_MS) return false
+        lastToolRequestAt = now
+        return true
+    }
+
     private fun placeholderIcon(): Bitmap {
         val size = (ICON_CACHE_SIZE_DP * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
         return Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also { bitmap ->
@@ -160,8 +176,11 @@ internal class LauncherAppRepository(
         return result
     }
 
+    private var lastToolRequestAt = 0L
+
     private companion object {
         const val THREAD_NAME = "FlymeFreeform-AppCatalog"
+        const val TOOL_REQUEST_INTERVAL_MS = 10_000L
         const val ICON_CACHE_SIZE_DP = 48f
     }
 }

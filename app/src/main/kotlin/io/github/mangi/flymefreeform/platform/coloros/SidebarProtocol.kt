@@ -38,6 +38,13 @@ internal object SidebarProtocol {
      */
     const val TOOL_CATALOG_PAYLOAD = 19
     const val TOOL_CATALOG_TEXT = "tool_catalog_text"
+
+    /**
+     * 「最近小窗」区块的点击转小窗启动：侧边栏进程无法自建小窗，
+     * 点击经会话 reply 交给 system_server 走既有启动链路。
+     */
+    const val LAUNCH_COMPONENT = 20
+    const val LAUNCH_COMPONENT_EXTRA = "launch_component"
     const val REQUEST_ID = "request_id"
     const val DEADLINE = "deadline_uptime"
     const val TARGET_UID = "target_uid"
@@ -88,6 +95,18 @@ internal object SidebarProtocol {
             data =
                 Bundle().apply {
                     putString(TOOL_ALIAS, alias)
+                    putInt(TARGET_UID, targetUid)
+                }
+        }
+
+    /** 小窗启动请求消息：侧边栏 → system_server，免会话方向。 */
+    fun launchComponentMessage(component: String, targetUid: Int): Message =
+        Message.obtain().apply {
+            what = LAUNCH_COMPONENT
+            arg1 = VERSION
+            data =
+                Bundle().apply {
+                    putString(LAUNCH_COMPONENT_EXTRA, component)
                     putInt(TARGET_UID, targetUid)
                 }
         }

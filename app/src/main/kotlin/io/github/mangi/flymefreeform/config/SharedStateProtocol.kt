@@ -22,6 +22,13 @@ internal object SharedStateProtocol {
     /** 侧边栏工具目录：侧边栏进程启动与面板打开时发布。 */
     const val KIND_TOOL_CATALOG = 2
 
+    /**
+     * App 主动向 system_server 索要工具目录。
+     * 被动等中继会被 ColorOS 的启动延迟策略拖住（实测 BootPressureHolder delay start），
+     * 打开设置时主动要一次最可靠。
+     */
+    const val ACTION_REQUEST_TOOLS = "io.github.mangi.flymefreeform.action.REQUEST_TOOLS"
+
     /** 侧边栏包名；用于校验目录广播的来源。 */
     const val SIDEBAR_PACKAGE = "com.coloros.smartsidebar"
 

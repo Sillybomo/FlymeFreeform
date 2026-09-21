@@ -56,6 +56,9 @@ internal class ColorOsSidebarClient(
     /** 侧边栏工具目录（经面板会话中转到 system_server，再由 system_server 转发给模块 App）。 */
     var onToolCatalog: ((String) -> Unit)? = null
 
+    /** 「最近小窗」点击转小窗启动（侧边栏进程无法自建小窗）。 */
+    var onLaunchComponent: ((ComponentName) -> Unit)? = null
+
     fun open(
         beforeOpen: () -> Boolean, onResult: (Outcome) -> Unit,
         onExitStarted: () -> Unit, onHideBackdrop: (() -> Unit) -> Unit, onClosed: () -> Unit,
@@ -185,6 +188,13 @@ internal class ColorOsSidebarClient(
     }
 
     private fun receive(message: Message): Boolean {
+        // 免会话消息（目录载荷 / 小窗启动请求）先于会话校验处理。
+        if (message.what == SidebarProtocol.LAUNCH_COMPONENT && message.arg1 == SidebarProtocol.VERSION) {
+            val flat = message.peekData()?.getString(SidebarProtocol.LAUNCH_COMPONENT_EXTRA)
+            val component = flat?.let(ComponentName::unflattenFromString)
+            if (component != null) handler.post { onLaunchComponent?.invoke(component) }
+            return true
+        }
         // 目录载荷与会话无关（侧边栏在面板打开时发布），因此先于会话校验处理。
         if (message.what == SidebarProtocol.TOOL_CATALOG_PAYLOAD && message.arg1 == SidebarProtocol.VERSION) {
             val text = message.peekData()?.getString(SidebarProtocol.TOOL_CATALOG_TEXT)

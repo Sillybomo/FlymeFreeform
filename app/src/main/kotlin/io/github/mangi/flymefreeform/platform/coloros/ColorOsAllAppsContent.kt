@@ -23,6 +23,8 @@ internal class ColorOsAllAppsContent(
      * 仅在构造与首帧各读一次；无数据时不插入区块，保持原厂面板外观不变。
      */
     private val recentFreeform: () -> List<ComponentName> = { emptyList() },
+    /** 「最近小窗」点击的启动回调（侧边栏进程无法自建小窗，交回 system_server）。 */
+    private val onLaunchComponent: (ComponentName) -> Unit = {},
     private val log: (Int, String, Throwable?) -> Unit = { _, _, _ -> },
 ) {
     private val allClass = loader.loadClass(ALL_CLASS)
@@ -142,7 +144,7 @@ internal class ColorOsAllAppsContent(
         }
         recentAttached =
             try {
-                recentSection.attach(view, recents) { closeAction?.invoke() }
+                recentSection.attach(view, recents, onLaunchComponent) { closeAction?.invoke() }
             } catch (exception: Exception) {
                 log(Log.WARN, "RECENT_SECTION_UNAVAILABLE", exception)
                 false
