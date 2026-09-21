@@ -5,6 +5,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.os.Handler
@@ -427,6 +428,12 @@ internal class ColorOsFreeformCoordinator(
         // 工具（小布识屏 / 屏幕翻译等）是侧边栏进程内的 AbsTool，不能当应用启动：
         // 转交侧边栏执行，不创建小窗，因此也不计入「最近小窗」。
         if (ModulePreferences.isToolComponent(entry.component)) {
+            if (!isGestureEnvironmentAllowed()) {
+                // 环境闸门（横屏/游戏模式/关键系统界面前台）拦截时不触发执行，之前是静默的。
+                logger(Log.WARN, "TOOL_LAUNCH_ENV_BLOCKED ${entry.component.className}", null)
+                return
+            }
+            logger(Log.INFO, "TOOL_LAUNCH_ATTEMPT ${entry.component.className}", null)
             if (!sidebar.runTool(entry.component.className)) {
                 logger(Log.WARN, "TOOL_LAUNCH_REJECTED ${entry.component.className}", null)
             }
@@ -460,7 +467,7 @@ internal class ColorOsFreeformCoordinator(
                 object : BroadcastReceiver() {
                     override fun onReceive(receiverContext: Context?, intent: Intent?) {
                         latestToolCatalog?.let { catalog ->
-                            SharedSettings.writeToolCatalog(context, stripIcons(catalog))
+                            SharedSettings.writeToolCatalog(context, shrinkIcons(catalog))
                             logger(Log.INFO, "TOOL_CATALOG_SERVED", null)
                         }
                     }
@@ -478,15 +485,30 @@ internal class ColorOsFreeformCoordinator(
      */
     private fun publishToolCatalogToApp(catalog: String) {
         latestToolCatalog = catalog
-        SharedSettings.writeToolCatalog(context, stripIcons(catalog))
+        SharedSettings.writeToolCatalog(context, shrinkIcons(catalog))
         logger(Log.INFO, "TOOL_CATALOG_RELAYED", null)
     }
 
-    /** 图标 base64 占目录体积的大头，设置侧不需要；去掉后单条 Settings 值降到几 KB。 */
-    private fun stripIcons(catalog: String): String =
+    /**
+     * 设置侧的目录副本压缩：图标统一压到 72px WEBP（每枚约 2-3KB，总量 60KB 级），
+     * Settings 单值可以承受；不能直接去掉图标 —— 设置界面的工具条目要显示图标。
+     */
+    private fun shrinkIcons(catalog: String): String =
         ToolCatalogCodec.encode(
-            ToolCatalogCodec.decode(catalog).map { record -> record.copy(iconPng = null) },
+            ToolCatalogCodec.decode(catalog).map { record ->
+                record.copy(iconPng = record.iconPng?.let(::shrinkToWebp))
+            },
         )
+
+    private fun shrinkToWebp(bytes: ByteArray): ByteArray? =
+        runCatching {
+            val source = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+            val scaled = Bitmap.createScaledBitmap(source, TOOL_ICON_PX, TOOL_ICON_PX, true)
+            java.io.ByteArrayOutputStream().use { stream ->
+                scaled.compress(Bitmap.CompressFormat.WEBP, 85, stream)
+                stream.toByteArray()
+            }
+        }.getOrNull()
 
     /**
      * 记录「小窗打开」：内存列表即时更新，Settings.Global 供侧边栏面板实时读取
@@ -687,6 +709,9 @@ internal class ColorOsFreeformCoordinator(
         val EMPTY_ICON = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
 
         const val CATALOG_THREAD_NAME = "FlymeFreeform-Catalog"
+
+        /** 设置侧目录副本的图标边长（px）。 */
+        const val TOOL_ICON_PX = 72
         const val OVERLAY_FAILURE_LOG_INTERVAL_MS = 10_000L
         val CRITICAL_PACKAGES =
             setOf(
