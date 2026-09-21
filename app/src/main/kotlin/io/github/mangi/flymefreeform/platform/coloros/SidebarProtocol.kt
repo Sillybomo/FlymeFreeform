@@ -29,6 +29,15 @@ internal object SidebarProtocol {
      */
     const val RUN_TOOL = 18
     const val TOOL_ALIAS = "tool_alias"
+
+    /**
+     * 工具目录载荷：侧边栏进程 → system_server。
+     * 侧边栏直接广播给模块 App 会被 ColorOS 的后台启动管控拦下
+     * （实测 `OplusAppStartupManager: prevent start ... by broadcast com.coloros.smartsidebar`），
+     * 因此目录经面板会话的 reply Messenger 交给 system_server，再由 system_server 转发给 App。
+     */
+    const val TOOL_CATALOG_PAYLOAD = 19
+    const val TOOL_CATALOG_TEXT = "tool_catalog_text"
     const val REQUEST_ID = "request_id"
     const val DEADLINE = "deadline_uptime"
     const val TARGET_UID = "target_uid"
@@ -79,6 +88,18 @@ internal object SidebarProtocol {
             data =
                 Bundle().apply {
                     putString(TOOL_ALIAS, alias)
+                    putInt(TARGET_UID, targetUid)
+                }
+        }
+
+    /** 工具目录载荷消息：免会话方向（侧边栏 → system_server），只需目标 UID。 */
+    fun catalogMessage(text: String, targetUid: Int): Message =
+        Message.obtain().apply {
+            what = TOOL_CATALOG_PAYLOAD
+            arg1 = VERSION
+            data =
+                Bundle().apply {
+                    putString(TOOL_CATALOG_TEXT, text)
                     putInt(TARGET_UID, targetUid)
                 }
         }

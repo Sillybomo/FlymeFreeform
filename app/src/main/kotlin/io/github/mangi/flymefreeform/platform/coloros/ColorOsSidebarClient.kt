@@ -53,6 +53,9 @@ internal class ColorOsSidebarClient(
 
     val isPending: Boolean get() = current?.committed == false
 
+    /** 侧边栏工具目录（经面板会话中转到 system_server，再由 system_server 转发给模块 App）。 */
+    var onToolCatalog: ((String) -> Unit)? = null
+
     fun open(
         beforeOpen: () -> Boolean, onResult: (Outcome) -> Unit,
         onExitStarted: () -> Unit, onHideBackdrop: (() -> Unit) -> Unit, onClosed: () -> Unit,
@@ -182,6 +185,12 @@ internal class ColorOsSidebarClient(
     }
 
     private fun receive(message: Message): Boolean {
+        // 目录载荷与会话无关（侧边栏在面板打开时发布），因此先于会话校验处理。
+        if (message.what == SidebarProtocol.TOOL_CATALOG_PAYLOAD && message.arg1 == SidebarProtocol.VERSION) {
+            val text = message.peekData()?.getString(SidebarProtocol.TOOL_CATALOG_TEXT)
+            if (!text.isNullOrEmpty()) handler.post { onToolCatalog?.invoke(text) }
+            return true
+        }
         val request = current ?: return true
         if (!SidebarProtocol.isTrustedPeer(message.sendingUid, request.targetUid, message.arg1)) return true
         try {

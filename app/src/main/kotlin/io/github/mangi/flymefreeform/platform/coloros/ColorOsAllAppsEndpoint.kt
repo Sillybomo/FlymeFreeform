@@ -78,24 +78,30 @@ internal class ColorOsAllAppsEndpoint(
     }
 
     /**
-     * 把侧边栏工具目录写入框架远端配置，供 App（选应用界面）与 system_server（扇形图标）读取。
-     * 只在首次成功或目录为空时重试；失败不阻断面板链路。
+     * 把侧边栏工具目录交给模块 App 落盘（Hook 进程的远端配置只读）。
+     *
+     * 两条路并行：直发广播（在部分 ROM 上会被厂商后台启动管控拦截，实测 ColorOS 会拦）+
+     * 经面板会话的 reply Messenger 交给 system_server 转发（system_server 不受该管控限制）。
+     * 失败不阻断面板链路。
      */
-    private fun publishToolCatalog() {
-        if (toolCatalogPublished) return
+    private fun publishToolCatalog(force: Boolean = false) {
+        if (toolCatalogPublished && !force) return
         try {
             val records = toolCatalog.build()
             if (records.isEmpty()) return
-            // Hook 进程的远端配置只读，目录经广播交给模块 App 落盘（App 是唯一有权写入的一方）。
+            val encoded = ToolCatalogCodec.encode(records)
             service.sendBroadcast(
                 Intent(SharedStateProtocol.ACTION)
                     .setPackage(SharedStateProtocol.MODULE_PACKAGE)
                     // App 装完处于 stopped 状态时普通广播不会唤醒它，必须显式包含。
                     .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
                     .putExtra(SharedStateProtocol.EXTRA_KIND, SharedStateProtocol.KIND_TOOL_CATALOG)
-                    .putExtra(SharedStateProtocol.EXTRA_CATALOG, ToolCatalogCodec.encode(records)),
+                    .putExtra(SharedStateProtocol.EXTRA_CATALOG, encoded),
             )
             toolCatalogPublished = true
+            request?.reply?.let { reply ->
+                runCatching { reply.send(SidebarProtocol.catalogMessage(encoded, Process.SYSTEM_UID)) }
+            }
             log(Log.INFO, "TOOL_CATALOG_PUBLISHED count=${records.size}", null)
         } catch (exception: Exception) {
             log(Log.WARN, "TOOL_CATALOG_PUBLISH_FAILED", exception)
@@ -266,8 +272,9 @@ internal class ColorOsAllAppsEndpoint(
             recentFreeform = { configuration.readRecentFreeform() },
             log = log,
         )
-        // 首次发布可能早于工具表初始化完成；面板打开时再补一次。
-        publishToolCatalog()
+        // 每次面板打开都重发：App 可能在上一次发布时还没起来（装完是 stopped 态），
+        // 一次性标志会让目录永远补不上。
+        publishToolCatalog(force = true)
         advance()
     }
 

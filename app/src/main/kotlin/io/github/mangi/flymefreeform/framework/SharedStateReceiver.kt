@@ -37,6 +37,8 @@ internal class SharedStateReceiver : BroadcastReceiver() {
                 // 伪造者最多让列表多出一条不可用的工具项，落盘后仍由侧边栏侧校验可用性。
                 val catalog = intent.getStringExtra(SharedStateProtocol.EXTRA_CATALOG) ?: return
                 repository.writeToolCatalog(catalog)
+                // 写入与刷新共用同一个单线程 worker，顺序有保证：刷新时目录已落盘。
+                application.launcherAppRepository.refreshTools()
             }
         }
     }

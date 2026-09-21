@@ -52,12 +52,20 @@ internal class ColorOsRecentSection(
     ): Boolean {
         val items = recents.take(ModulePreferences.MAX_RECENT_FREEFORM)
         if (items.isEmpty()) return false
+        Log.i(TAG, "RECENT_SECTION_BUILD count=${items.size}")
         return try {
             val container =
                 panelView.findViewById<ViewGroup>(resourceId(CONTAINER_ID, "id"))
-                    ?: return false
-            val appList = panelView.findViewById<View>(resourceId(APP_LIST_ID, "id"))
-                ?: return false
+                    ?: run {
+                        log(Log.WARN, "RECENT_SECTION_CONTAINER_MISSING", null)
+                        return false
+                    }
+            val appList =
+                panelView.findViewById<View>(resourceId(APP_LIST_ID, "id"))
+                    ?: run {
+                        log(Log.WARN, "RECENT_SECTION_LIST_MISSING", null)
+                        return false
+                    }
             val index = container.indexOfChild(appList).coerceAtLeast(0)
             val resolved = items.mapNotNull { component -> resolve(component) }
             if (resolved.isEmpty()) return false
@@ -280,6 +288,8 @@ internal class ColorOsRecentSection(
     }
 
     private companion object {
+        const val TAG = "FlymeFreeform"
+
         /** 原厂布局 layout_all_app 中承载搜索栏与列表的垂直容器。 */
         const val CONTAINER_ID = "all_app_search_motion_group"
 

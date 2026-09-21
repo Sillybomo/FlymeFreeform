@@ -135,7 +135,11 @@ internal class ColorOsAllAppsContent(
     private fun tryAttachRecents() {
         if (recentAttached) return
         val recents = runCatching { recentFreeform() }.getOrDefault(emptyList())
-        if (recents.isEmpty()) return
+        if (recents.isEmpty()) {
+            // 配置里没有最近记录：侧边栏进程可能是首个读取方，需要能看到 App 侧的写入。
+            log(Log.INFO, "RECENT_SECTION_EMPTY", null)
+            return
+        }
         recentAttached =
             try {
                 recentSection.attach(view, recents) { closeAction?.invoke() }
@@ -143,6 +147,9 @@ internal class ColorOsAllAppsContent(
                 log(Log.WARN, "RECENT_SECTION_UNAVAILABLE", exception)
                 false
             }
+        if (!recentAttached) {
+            log(Log.WARN, "RECENT_SECTION_NOT_ATTACHED count=${recents.size}", null)
+        }
     }
 
     fun ready(): Boolean = view.childCount > 0 && getMain.call(handler) != null &&

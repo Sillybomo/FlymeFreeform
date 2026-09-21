@@ -70,6 +70,11 @@ internal class ColorOsFreeformCoordinator(
                 }
             }
         }
+    init {
+        // 侧边栏直发 App 的广播会被 ColorOS 后台启动管控拦截，改经 system_server 转发。
+        sidebar.onToolCatalog = ::publishToolCatalogToApp
+    }
+
     private val packageReceiver =
         object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
@@ -417,6 +422,26 @@ internal class ColorOsFreeformCoordinator(
      * Hook 进程的框架远端配置是只读的（实测 `edit()` 抛 `UnsupportedOperationException`），
      * 因此「最近小窗」经广播交给模块 App 落盘，侧边栏进程随后按只读方式读取渲染。
      */
+    /**
+     * 把侧边栏工具目录转发给模块 App。
+     * system_server 发出的广播不受厂商「后台启动管控」限制（实测侧边栏进程会被拦），
+     * App 收到后落盘，设置界面的工具列表与扇形的工具图标都读这份数据。
+     */
+    private fun publishToolCatalogToApp(catalog: String) {
+        try {
+            context.sendBroadcast(
+                Intent(SharedStateProtocol.ACTION)
+                    .setPackage(SharedStateProtocol.MODULE_PACKAGE)
+                    .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+                    .putExtra(SharedStateProtocol.EXTRA_KIND, SharedStateProtocol.KIND_TOOL_CATALOG)
+                    .putExtra(SharedStateProtocol.EXTRA_CATALOG, catalog),
+            )
+            logger(Log.INFO, "TOOL_CATALOG_RELAYED", null)
+        } catch (exception: Exception) {
+            logger(Log.WARN, "TOOL_CATALOG_RELAY_FAILED", exception)
+        }
+    }
+
     private fun publishRecentFreeform(component: ComponentName) {
         try {
             context.sendBroadcast(
