@@ -26,6 +26,10 @@ internal class FrameworkConnectionRepository {
     private val unavailableServices = IdentityHashMap<XposedService, FrameworkConnectionState>()
     private var activeConnection: ActiveConnection? = null
 
+    /** 连接建立前排队等待落盘的共享状态（单线程 worker 内访问）。 */
+    private val pendingRecent = ArrayDeque<ComponentName>()
+    private var pendingCatalog: String? = null
+
     private val mutableState = MutableStateFlow(FrameworkConnectionState())
     val state: StateFlow<FrameworkConnectionState> = mutableState.asStateFlow()
 
@@ -127,45 +131,88 @@ internal class FrameworkConnectionRepository {
      *
      * 由 Hook 侧广播驱动（Hook 进程的远端配置只读，只有 App 能写），
      * 供「全部」面板的「最近小窗」区块读取。
+     * 广播会唤醒刚启动的 App，此时框架连接尚未建立（[activeConnection] 为 null），
+     * 因此先入队、连上后由 [flushPendingSharedState] 补写。
      */
     fun recordRecentFreeform(component: ComponentName) {
         worker.execute {
+            val preferences = activeConnection?.preferences
+            if (preferences == null) {
+                pendingRecent.remove(component)
+                pendingRecent.addFirst(component)
+                while (pendingRecent.size > ModulePreferences.MAX_RECENT_FREEFORM) pendingRecent.removeLast()
+                Log.i(TAG, "SHARED_STATE_RECENT_DEFERRED ${component.flattenToString()}")
+                return@execute
+            }
+            writeRecent(component, preferences)
+        }
+    }
+
+    /** 写入侧边栏工具目录；未连接时排队，内容未变化时不重复落盘。 */
+    fun writeToolCatalog(catalog: String) {
+        if (catalog.isEmpty()) return
+        worker.execute {
+            val preferences = activeConnection?.preferences
+            if (preferences == null) {
+                pendingCatalog = catalog
+                Log.i(TAG, "SHARED_STATE_CATALOG_DEFERRED")
+                return@execute
+            }
+            writeCatalog(catalog, preferences)
+        }
+    }
+
+    /** 框架连接建立后补写等待中的共享状态；由 [activateService] 触发。 */
+    private fun flushPendingSharedState() {
+        worker.execute {
             val preferences = activeConnection?.preferences ?: return@execute
-            val current =
-                PinnedComponentCodec
-                    .decodeRaw(
-                        preferences.getString(ModulePreferences.KEY_RECENT_FREEFORM, "") ?: "",
-                        ModulePreferences.MAX_RECENT_FREEFORM,
-                    )
-                    .mapNotNull(ComponentName::unflattenFromString)
-            val next =
-                (listOf(component) + current.filterNot { it == component })
-                    .take(ModulePreferences.MAX_RECENT_FREEFORM)
-            runCatching {
-                preferences
-                    .edit()
-                    .putString(
-                        ModulePreferences.KEY_RECENT_FREEFORM,
-                        next.joinToString("\n", transform = ComponentName::flattenToString),
-                    )
-                    .apply()
-            }.onFailure { exception ->
-                Log.w(TAG, "SHARED_STATE_RECENT_WRITE_FAILED", exception)
+            val catalog = pendingCatalog
+            if (catalog != null) {
+                pendingCatalog = null
+                writeCatalog(catalog, preferences)
+            }
+            val deferred = pendingRecent.toList()
+            pendingRecent.clear()
+            // 队列头部是最新的，倒序补写才能保持"最近的在最前"。
+            deferred.reversed().forEach { component -> writeRecent(component, preferences) }
+            if (catalog != null || deferred.isNotEmpty()) {
+                Log.i(TAG, "SHARED_STATE_FLUSHED recent=${deferred.size} catalog=${catalog != null}")
             }
         }
     }
 
-    /** 写入侧边栏工具目录；内容未变化时不重复落盘。 */
-    fun writeToolCatalog(catalog: String) {
-        if (catalog.isEmpty()) return
-        worker.execute {
-            val preferences = activeConnection?.preferences ?: return@execute
-            if (preferences.getString(ModulePreferences.KEY_TOOL_CATALOG, null) == catalog) return@execute
-            runCatching {
-                preferences.edit().putString(ModulePreferences.KEY_TOOL_CATALOG, catalog).apply()
-            }.onFailure { exception ->
-                Log.w(TAG, "SHARED_STATE_CATALOG_WRITE_FAILED", exception)
-            }
+    private fun writeRecent(component: ComponentName, preferences: SharedPreferences) {
+        val current =
+            PinnedComponentCodec
+                .decodeRaw(
+                    preferences.getString(ModulePreferences.KEY_RECENT_FREEFORM, "") ?: "",
+                    ModulePreferences.MAX_RECENT_FREEFORM,
+                )
+                .mapNotNull(ComponentName::unflattenFromString)
+        val next =
+            (listOf(component) + current.filterNot { it == component })
+                .take(ModulePreferences.MAX_RECENT_FREEFORM)
+        runCatching {
+            preferences
+                .edit()
+                .putString(
+                    ModulePreferences.KEY_RECENT_FREEFORM,
+                    next.joinToString("\n", transform = ComponentName::flattenToString),
+                )
+                .apply()
+        }.onFailure { exception ->
+            Log.w(TAG, "SHARED_STATE_RECENT_WRITE_FAILED", exception)
+        }
+    }
+
+    private fun writeCatalog(catalog: String, preferences: SharedPreferences) {
+        if (preferences.getString(ModulePreferences.KEY_TOOL_CATALOG, null) == catalog) return
+        runCatching {
+            preferences.edit().putString(ModulePreferences.KEY_TOOL_CATALOG, catalog).apply()
+        }.onSuccess {
+            Log.i(TAG, "SHARED_STATE_CATALOG_WRITTEN")
+        }.onFailure { exception ->
+            Log.w(TAG, "SHARED_STATE_CATALOG_WRITE_FAILED", exception)
         }
     }
 
@@ -241,6 +288,7 @@ internal class FrameworkConnectionRepository {
         if (result.connection != null) {
             unavailableServices.remove(service)
             activeConnection = result.connection
+            flushPendingSharedState()
         } else {
             activeConnection = null
             unavailableServices[service] = result.state
