@@ -97,6 +97,10 @@ internal fun PinnedAppsScreen(
     var draggingComponent by remember { mutableStateOf<ComponentName?>(null) }
     var dragOffsetY by remember { mutableFloatStateOf(0f) }
     var rowHeightPx by remember { mutableFloatStateOf(0f) }
+    // @author bomo 内圈拖动状态（与外圈相互独立）；内圈行复用 AddedAppRow 后样式与排序能力同源
+    var draggingInnerComponent by remember { mutableStateOf<ComponentName?>(null) }
+    var dragOffsetInnerY by remember { mutableFloatStateOf(0f) }
+    var innerRowHeightPx by remember { mutableFloatStateOf(0f) }
     val scrollBehavior = MiuixScrollBehavior()
     val backdrop = rememberTopBarBackdrop()
     val topBarColor = topBarContainerColor(backdrop)
@@ -291,45 +295,72 @@ internal fun PinnedAppsScreen(
                 }
                 item(key = "inner") {
                     Card(modifier = Modifier.fillMaxWidth()) {
-                        displayedInner.forEach { component ->
-                            val app = appByComponent[component]
-                            BasicComponent(
-                                title = app?.label ?: component.packageName,
-                                summary =
-                                    if (app == null) {
-                                        stringResource(R.string.pinned_app_missing)
-                                    } else {
-                                        null
+                        // @author bomo 内圈行改为复用 AddedAppRow：与外圈同一样式（红色圆形移除钮）
+                        // + 长按拖动排序。原先内联 BasicComponent + 灰色 Remove 图标，
+                        // 既与外圈观感不一致，也没有实现副标题承诺的拖动排序（用户 2026-09-22 反馈）。
+                        displayedInner.forEachIndexed { index, component ->
+                            key(component.flattenToString()) {
+                                AddedAppRow(
+                                    component = component,
+                                    app = appByComponent[component],
+                                    index = index,
+                                    enabled = state.canChangeSettings,
+                                    draggable = state.canChangeSettings && displayedInner.size > 1,
+                                    dragging = draggingInnerComponent == component,
+                                    dragOffsetY = dragOffsetInnerY,
+                                    rowHeightPx = innerRowHeightPx,
+                                    onRowHeight = { height ->
+                                        if (innerRowHeightPx != height) innerRowHeightPx = height
                                     },
-                                startAction = {
-                                    AppIcon(
-                                        app
-                                            ?: InstalledLauncherApp(
-                                                component,
-                                                "",
-                                                android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888),
-                                            ),
-                                    )
-                                },
-                                endActions = {
-                                    IconButton(
-                                        onClick = {
-                                            val updated = displayedInner.filterNot { it == component }
-                                            localInnerOrder = updated
-                                            onInnerPinnedComponentsChange(updated)
-                                        },
-                                        enabled = state.canChangeSettings,
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Remove,
-                                            contentDescription = null,
-                                            tint = MiuixTheme.colorScheme.onErrorContainer,
-                                        )
-                                    }
-                                },
-                                onClick = {},
-                                enabled = state.canChangeSettings,
-                            )
+                                    onRemove = {
+                                        val updated = displayedInner.filterNot { it == component }
+                                        localInnerOrder = updated
+                                        onInnerPinnedComponentsChange(updated)
+                                    },
+                                    onDragStart = {
+                                        localInnerOrder = displayedInner
+                                        draggingInnerComponent = component
+                                        dragOffsetInnerY = 0f
+                                    },
+                                    onDrag = { deltaY ->
+                                        if (innerRowHeightPx > 0f) {
+                                            dragOffsetInnerY += deltaY
+                                            val order =
+                                                (localInnerOrder ?: displayedInner).toMutableList()
+                                            var current = order.indexOf(component)
+                                            while (current >= 0 &&
+                                                dragOffsetInnerY > innerRowHeightPx / 2 &&
+                                                current < order.size - 1
+                                            ) {
+                                                order.add(current + 1, order.removeAt(current))
+                                                dragOffsetInnerY -= innerRowHeightPx
+                                                current++
+                                            }
+                                            while (current >= 0 &&
+                                                dragOffsetInnerY < -innerRowHeightPx / 2 &&
+                                                current > 0
+                                            ) {
+                                                order.add(current - 1, order.removeAt(current))
+                                                dragOffsetInnerY += innerRowHeightPx
+                                                current--
+                                            }
+                                            localInnerOrder = order
+                                        }
+                                    },
+                                    onDragEnd = {
+                                        val order = localInnerOrder
+                                        draggingInnerComponent = null
+                                        dragOffsetInnerY = 0f
+                                        if (order != null) {
+                                            if (order == pinnedInner) {
+                                                localInnerOrder = null
+                                            } else {
+                                                onInnerPinnedComponentsChange(order)
+                                            }
+                                        }
+                                    },
+                                )
+                            }
                         }
                         if (displayedInner.isEmpty()) {
                             BasicComponent(
