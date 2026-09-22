@@ -9,6 +9,7 @@ import io.github.mangi.flymefreeform.config.ModulePreferences
 import io.github.mangi.flymefreeform.config.ModuleSettingsSnapshot
 import io.github.mangi.flymefreeform.config.OutsideTapCloseMode
 import io.github.mangi.flymefreeform.config.PinnedComponentCodec
+import io.github.mangi.flymefreeform.config.TriggerShape
 import java.util.IdentityHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -63,6 +64,31 @@ internal class FrameworkConnectionRepository {
             it.copy(
                 cornerTriggerRangeDp =
                     ModulePreferences.coerceCornerTriggerRangeDp(rangeDp),
+            )
+        }
+
+    /**
+     * @author bomo 设置角落触发热区的形状（扇形 / 三角形）。
+     * 只写配置；热区在三个宿主进程（systemui 角落窗口、launcher 抢占、system_server 指针监听）
+     * 读取设置时生效，改变形状不需要重装模块。
+     */
+    fun setTriggerShape(shape: TriggerShape) =
+        updateSettings { it.copy(triggerShape = shape) }
+
+    /** @author bomo 设置三角形触发热区的横向长度（沿屏幕底边，dp）；扇形不使用。 */
+    fun setTriggerHorizontalDp(horizontalDp: Int) =
+        updateSettings {
+            it.copy(
+                triggerHorizontalDp =
+                    ModulePreferences.coerceTriggerExtentDp(horizontalDp),
+            )
+        }
+
+    /** @author bomo 设置三角形触发热区的纵向高度（沿屏幕侧边，dp）；扇形不使用。 */
+    fun setTriggerVerticalDp(verticalDp: Int) =
+        updateSettings {
+            it.copy(
+                triggerVerticalDp = ModulePreferences.coerceTriggerExtentDp(verticalDp),
             )
         }
 
@@ -237,7 +263,8 @@ internal class FrameworkConnectionRepository {
         }
     }
 
-    private fun updateSettings(transform: (ModuleSettingsSnapshot) -> ModuleSettingsSnapshot) {        worker.execute {
+    private fun updateSettings(transform: (ModuleSettingsSnapshot) -> ModuleSettingsSnapshot) {
+        worker.execute {
             val connection = activeConnection ?: return@execute
             val previous = mutableState.value
             if (!previous.canChangeSettings) return@execute

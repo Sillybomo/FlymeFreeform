@@ -34,6 +34,9 @@ class MainActivity : ComponentActivity() {
                     onLeftCornerEnabledChange = repository::setLeftCornerEnabled,
                     onRightCornerEnabledChange = repository::setRightCornerEnabled,
                     onCornerTriggerRangeChange = repository::setCornerTriggerRangeDp,
+                    onTriggerShapeChange = repository::setTriggerShape,
+                    onTriggerHorizontalDpChange = repository::setTriggerHorizontalDp,
+                    onTriggerVerticalDpChange = repository::setTriggerVerticalDp,
                     onPanelScaleChange = repository::setPanelScalePercent,
                     onOutsideTapCloseModeChange = repository::setOutsideTapCloseMode,
                     onHandleSwipeUpToMiniEnabledChange =

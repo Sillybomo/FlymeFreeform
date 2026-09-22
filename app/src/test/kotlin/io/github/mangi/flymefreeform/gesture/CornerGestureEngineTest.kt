@@ -1,5 +1,6 @@
 package io.github.mangi.flymefreeform.gesture
 
+import io.github.mangi.flymefreeform.config.TriggerShape
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -10,7 +11,7 @@ class CornerGestureEngineTest {
         CornerGestureConfig(
             displayWidth = 1000f,
             displayHeight = 2000f,
-            triggerRadius = 100f,
+            triggerZone = TriggerHitZone.sector(100f),
             inwardThreshold = 14f,
             upwardThreshold = 4f,
             reverseTolerance = 8f,
@@ -89,13 +90,22 @@ class CornerGestureEngineTest {
 
     @Test
     fun configuredRangeUsesDpWhileMovementThresholdsIgnoreRange() {
+        fun sectorZone(rangeDp: Int): TriggerHitZone =
+            CornerTriggerRegion.zone(
+                shape = TriggerShape.Sector,
+                triggerRangeDp = rangeDp,
+                horizontalDp = 0,
+                verticalDp = 0,
+                density = 2f,
+            )
+
         val compact =
             AdaptiveCornerGestureConfig.create(
                 displayWidth = 800f,
                 displayHeight = 1600f,
                 touchSlop = 10f,
                 density = 2f,
-                triggerRangeDp = 84,
+                triggerZone = sectorZone(84),
                 leftEnabled = true,
                 rightEnabled = true,
             )
@@ -105,7 +115,7 @@ class CornerGestureEngineTest {
                 displayHeight = 2400f,
                 touchSlop = 10f,
                 density = 2f,
-                triggerRangeDp = 160,
+                triggerZone = sectorZone(160),
                 leftEnabled = true,
                 rightEnabled = true,
             )
@@ -115,13 +125,13 @@ class CornerGestureEngineTest {
                 displayHeight = 1600f,
                 touchSlop = 30f,
                 density = 2f,
-                triggerRangeDp = 84,
+                triggerZone = sectorZone(84),
                 leftEnabled = true,
                 rightEnabled = true,
             )
 
-        assertTrue(wide.triggerRadius > compact.triggerRadius)
-        assertTrue(largerTouchSlop.triggerRadius == compact.triggerRadius)
+        assertTrue(wide.triggerZone.radiusPx > compact.triggerZone.radiusPx)
+        assertTrue(largerTouchSlop.triggerZone.radiusPx == compact.triggerZone.radiusPx)
         assertTrue(wide.inwardThreshold == compact.inwardThreshold)
         assertTrue(wide.upwardThreshold == compact.upwardThreshold)
         assertTrue(largerTouchSlop.inwardThreshold > compact.inwardThreshold)

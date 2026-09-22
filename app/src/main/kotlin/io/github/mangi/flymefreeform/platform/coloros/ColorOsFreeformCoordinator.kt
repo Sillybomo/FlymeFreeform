@@ -26,6 +26,7 @@ import io.github.mangi.flymefreeform.config.SharedStateProtocol
 import io.github.mangi.flymefreeform.gesture.AdaptiveCornerGestureConfig
 import io.github.mangi.flymefreeform.gesture.CornerGestureConfig
 import io.github.mangi.flymefreeform.gesture.CornerGestureEngine
+import io.github.mangi.flymefreeform.gesture.CornerTriggerRegion
 import io.github.mangi.flymefreeform.gesture.GestureAction
 import io.github.mangi.flymefreeform.hook.ModuleEnvironmentState
 import io.github.mangi.flymefreeform.hook.ProcessConfiguration
@@ -326,7 +327,8 @@ internal class ColorOsFreeformCoordinator(
                     displayHeight = metrics.heightPixels.toFloat(),
                     touchSlop = touchSlop,
                     density = metrics.density,
-                    triggerRangeDp = settings.cornerTriggerRangeDp,
+                    // @author bomo 热区由设置的形状 + 横/纵长度（三角形）与半径（扇形）决定。
+                    triggerZone = CornerTriggerRegion.of(settings, metrics.density),
                     leftEnabled = settings.leftCornerEnabled,
                     rightEnabled = settings.rightCornerEnabled,
                 ).also { activeGestureConfig = it }

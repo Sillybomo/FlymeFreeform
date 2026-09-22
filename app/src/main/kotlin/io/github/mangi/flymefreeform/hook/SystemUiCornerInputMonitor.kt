@@ -24,6 +24,7 @@ import io.github.mangi.flymefreeform.gesture.CornerSide
 import io.github.mangi.flymefreeform.gesture.CornerTriggerRegion
 import io.github.mangi.flymefreeform.gesture.GestureAction
 import io.github.mangi.flymefreeform.gesture.GesturePhase
+import io.github.mangi.flymefreeform.gesture.TriggerHitZone
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 
@@ -103,17 +104,19 @@ internal class SystemUiCornerInputMonitor(
             return
         }
 
+        // @author bomo 窗口尺寸必须覆盖整个热区的包围盒：三角形可以「横向长、纵向短」，
+        // 若仍只按扇形半径开窗，落在窗口外的触摸根本送不到这里，宽高就形同虚设。
+        val zone =
+            CornerTriggerRegion.of(settings, context.resources.displayMetrics.density)
         val size =
-            (CornerTriggerRegion.radiusPx(
-                settings.cornerTriggerRangeDp,
-                context.resources.displayMetrics.density,
-            ) + 0.5f).toInt().coerceAtLeast(1)
+            (maxOf(zone.horizontalLimitPx, zone.verticalLimitPx) + 0.5f)
+                .toInt()
+                .coerceAtLeast(1)
         if (existing == null) {
-            addBinding(side, size)
-        } else if (existing.size != size) {
+            addBinding(side, size, zone)
+        } else if (existing.size != size || existing.view.zone != zone) {
             existing.size = size
-            existing.view.rangePx = size.toFloat()
-            existing.view.rangeDp = settings.cornerTriggerRangeDp
+            existing.view.zone = zone
             try {
                 windowManager.updateViewLayout(existing.view, createLayoutParams(side, size))
             } catch (exception: ReflectiveOperationException) {
@@ -126,13 +129,12 @@ internal class SystemUiCornerInputMonitor(
         }
     }
 
-    private fun addBinding(side: CornerSide, size: Int) {
+    private fun addBinding(side: CornerSide, size: Int, zone: TriggerHitZone) {
         val view =
             CornerGestureView(
                 context = context,
                 side = side,
-                rangePx = size.toFloat(),
-                rangeDp = settings.cornerTriggerRangeDp,
+                zone = zone,
                 canClaim = { canClaim(side) },
                 pilfer = ::pilfer,
                 onStreamFinished = ::finishStream,
@@ -237,8 +239,8 @@ internal class SystemUiCornerInputMonitor(
     private class CornerGestureView(
         context: Context,
         private val side: CornerSide,
-        var rangePx: Float,
-        var rangeDp: Int,
+        /** @author bomo 热区几何；随设置变化由宿主整体替换（data class 相等即无变化）。 */
+        var zone: TriggerHitZone,
         private val canClaim: () -> Boolean,
         private val pilfer: (View) -> Boolean,
         private val onStreamFinished: () -> Unit,
@@ -279,7 +281,7 @@ internal class SystemUiCornerInputMonitor(
                                 y = event.y,
                                 displayWidth = width.toFloat(),
                                 displayHeight = height.toFloat(),
-                                radius = rangePx,
+                                zone = zone,
                                 leftEnabled = side == CornerSide.Left,
                                 rightEnabled = side == CornerSide.Right,
                             ) == side
@@ -290,7 +292,7 @@ internal class SystemUiCornerInputMonitor(
                                 displayHeight = height.toFloat(),
                                 touchSlop = touchSlop,
                                 density = density,
-                                triggerRangeDp = rangeDp,
+                                triggerZone = zone,
                                 leftEnabled = side == CornerSide.Left,
                                 rightEnabled = side == CornerSide.Right,
                             )

@@ -35,7 +35,8 @@ internal sealed interface GestureAction {
 internal data class CornerGestureConfig(
     val displayWidth: Float,
     val displayHeight: Float,
-    val triggerRadius: Float,
+    /** @author bomo 角落触发热区（形状 + 横/纵长度 + 半径，均已换算为 px）。 */
+    val triggerZone: TriggerHitZone,
     val inwardThreshold: Float,
     val upwardThreshold: Float,
     val reverseTolerance: Float,
@@ -44,21 +45,24 @@ internal data class CornerGestureConfig(
 )
 
 internal object AdaptiveCornerGestureConfig {
+    /**
+     * @param triggerZone 角落触发热区（已换算为 px）；由调用方用
+     *   [CornerTriggerRegion.zone] 构造，便于同一热区同时用于「角落输入窗口尺寸」与命中判定。
+     */
     fun create(
         displayWidth: Float,
         displayHeight: Float,
         touchSlop: Float,
         density: Float,
-        triggerRangeDp: Int,
+        triggerZone: TriggerHitZone,
         leftEnabled: Boolean,
         rightEnabled: Boolean,
     ): CornerGestureConfig {
         val safeDensity = density.takeIf { it.isFinite() && it > 0f } ?: 1f
-        val triggerRadius = CornerTriggerRegion.radiusPx(triggerRangeDp, safeDensity)
         return CornerGestureConfig(
             displayWidth = displayWidth,
             displayHeight = displayHeight,
-            triggerRadius = triggerRadius,
+            triggerZone = triggerZone,
             inwardThreshold = max(touchSlop * INWARD_SLOP_MULTIPLIER, safeDensity * INWARD_DP),
             upwardThreshold = max(touchSlop * UPWARD_SLOP_MULTIPLIER, safeDensity * UPWARD_DP),
             reverseTolerance = max(touchSlop, safeDensity * REVERSE_TOLERANCE_DP),
@@ -157,7 +161,7 @@ internal class CornerGestureEngine {
             y = y,
             displayWidth = config.displayWidth,
             displayHeight = config.displayHeight,
-            radius = config.triggerRadius,
+            zone = config.triggerZone,
             leftEnabled = config.leftEnabled,
             rightEnabled = config.rightEnabled,
         )

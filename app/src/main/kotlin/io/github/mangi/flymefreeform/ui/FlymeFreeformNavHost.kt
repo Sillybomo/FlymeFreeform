@@ -11,6 +11,7 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import io.github.mangi.flymefreeform.apps.InstalledLauncherApp
 import io.github.mangi.flymefreeform.config.OutsideTapCloseMode
+import io.github.mangi.flymefreeform.config.TriggerShape
 import io.github.mangi.flymefreeform.framework.FrameworkConnectionState
 import kotlinx.serialization.Serializable
 
@@ -31,6 +32,12 @@ internal fun FlymeFreeformNavHost(
     onLeftCornerEnabledChange: (Boolean) -> Unit,
     onRightCornerEnabledChange: (Boolean) -> Unit,
     onCornerTriggerRangeChange: (Int) -> Unit,
+    /** @author bomo 触发热区形状（扇形 / 三角形）变更。 */
+    onTriggerShapeChange: (TriggerShape) -> Unit,
+    /** @author bomo 三角形热区横向长度变更（沿屏幕底边）。 */
+    onTriggerHorizontalDpChange: (Int) -> Unit,
+    /** @author bomo 三角形热区纵向高度变更（沿屏幕侧边）。 */
+    onTriggerVerticalDpChange: (Int) -> Unit,
     /** @author bomo 「全部」面板缩放百分比变更。 */
     onPanelScaleChange: (Int) -> Unit,
     onOutsideTapCloseModeChange: (OutsideTapCloseMode) -> Unit,
@@ -71,6 +78,9 @@ internal fun FlymeFreeformNavHost(
                         onLeftCornerEnabledChange = onLeftCornerEnabledChange,
                         onRightCornerEnabledChange = onRightCornerEnabledChange,
                         onCornerTriggerRangeChange = onCornerTriggerRangeChange,
+                        onTriggerShapeChange = onTriggerShapeChange,
+                        onTriggerHorizontalDpChange = onTriggerHorizontalDpChange,
+                        onTriggerVerticalDpChange = onTriggerVerticalDpChange,
                         onPanelScaleChange = onPanelScaleChange,
                         onOutsideTapCloseModeChange = onOutsideTapCloseModeChange,
                         onHandleSwipeUpToMiniEnabledChange =

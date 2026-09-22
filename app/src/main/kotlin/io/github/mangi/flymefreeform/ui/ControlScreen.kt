@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.Apps
+import androidx.compose.material.icons.rounded.Category
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Dashboard
 import androidx.compose.material.icons.rounded.ElectricalServices
@@ -30,6 +31,8 @@ import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.Straighten
+import androidx.compose.material.icons.rounded.SwapHoriz
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.SwipeLeft
 import androidx.compose.material.icons.rounded.SwipeRight
 import androidx.compose.material.icons.rounded.SwipeUp
@@ -46,6 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -55,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import io.github.mangi.flymefreeform.R
 import io.github.mangi.flymefreeform.config.ModulePreferences
 import io.github.mangi.flymefreeform.config.OutsideTapCloseMode
+import io.github.mangi.flymefreeform.config.TriggerShape
 import io.github.mangi.flymefreeform.framework.FrameworkConnectionIssue
 import io.github.mangi.flymefreeform.framework.FrameworkConnectionState
 import io.github.mangi.flymefreeform.framework.FrameworkConnectionStatus
@@ -87,6 +92,12 @@ internal fun ControlScreen(
     onLeftCornerEnabledChange: (Boolean) -> Unit,
     onRightCornerEnabledChange: (Boolean) -> Unit,
     onCornerTriggerRangeChange: (Int) -> Unit,
+    /** @author bomo 触发热区形状（扇形 / 三角形）变更。 */
+    onTriggerShapeChange: (TriggerShape) -> Unit,
+    /** @author bomo 三角形热区横向长度变更（沿屏幕底边）。 */
+    onTriggerHorizontalDpChange: (Int) -> Unit,
+    /** @author bomo 三角形热区纵向高度变更（沿屏幕侧边）。 */
+    onTriggerVerticalDpChange: (Int) -> Unit,
     /** @author bomo 「全部」面板缩放百分比变更（设置界面滑条，热生效）。 */
     onPanelScaleChange: (Int) -> Unit,
     onOutsideTapCloseModeChange: (OutsideTapCloseMode) -> Unit,
@@ -99,9 +110,11 @@ internal fun ControlScreen(
     val scrollBehavior = MiuixScrollBehavior()
     val backdrop = rememberTopBarBackdrop()
     val topBarColor = topBarContainerColor(backdrop)
-    var cornerRangePreviewDp by remember { mutableStateOf<Int?>(null) }
+    // @author bomo 拖动任一条触发热区滑条时，用「其余项的已确认值 + 正在拖动的草稿值」
+    // 拼出预览快照；松手即置空收回预览。三条滑条共用同一个预览通道。
+    var cornerRangePreview by remember { mutableStateOf<TriggerRangePreview?>(null) }
     LaunchedEffect(state.canChangeSettings) {
-        if (!state.canChangeSettings) cornerRangePreviewDp = null
+        if (!state.canChangeSettings) cornerRangePreview = null
     }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val windowWidth = maxWidth
@@ -161,7 +174,10 @@ internal fun ControlScreen(
                             onLeftCornerEnabledChange,
                             onRightCornerEnabledChange,
                             onCornerTriggerRangeChange,
-                            onCornerRangePreviewChange = { cornerRangePreviewDp = it },
+                            onTriggerShapeChange = onTriggerShapeChange,
+                            onTriggerHorizontalDpChange = onTriggerHorizontalDpChange,
+                            onTriggerVerticalDpChange = onTriggerVerticalDpChange,
+                            onCornerRangePreviewChange = { cornerRangePreview = it },
                             onPanelScaleChange = onPanelScaleChange,
                             onNavigateToPinnedApps,
                         )
@@ -181,9 +197,12 @@ internal fun ControlScreen(
                 }
             }
         }
-        cornerRangePreviewDp?.let { rangeDp ->
+        cornerRangePreview?.let { preview ->
             CornerRangePreview(
-                rangeDp = rangeDp,
+                shape = preview.shape,
+                rangeDp = preview.rangeDp,
+                horizontalDp = preview.horizontalDp,
+                verticalDp = preview.verticalDp,
                 leftEnabled = state.settings.leftCornerEnabled,
                 rightEnabled = state.settings.rightCornerEnabled,
             )
@@ -317,7 +336,13 @@ private fun SettingsCard(
     onLeftCornerEnabledChange: (Boolean) -> Unit,
     onRightCornerEnabledChange: (Boolean) -> Unit,
     onCornerTriggerRangeChange: (Int) -> Unit,
-    onCornerRangePreviewChange: (Int?) -> Unit,
+    /** @author bomo 触发热区形状变更。 */
+    onTriggerShapeChange: (TriggerShape) -> Unit,
+    /** @author bomo 三角形热区横向长度变更。 */
+    onTriggerHorizontalDpChange: (Int) -> Unit,
+    /** @author bomo 三角形热区纵向高度变更。 */
+    onTriggerVerticalDpChange: (Int) -> Unit,
+    onCornerRangePreviewChange: (TriggerRangePreview?) -> Unit,
     /** @author bomo 「全部」面板缩放百分比变更。 */
     onPanelScaleChange: (Int) -> Unit,
     onNavigateToPinnedApps: () -> Unit,
@@ -364,16 +389,86 @@ private fun SettingsCard(
             enabled = state.canChangeSettings,
             startAction = { PreferenceIcon(Icons.Rounded.SwipeLeft, state.canChangeSettings) },
         )
-        RemoteDpSliderPreference(
-            icon = Icons.Rounded.Straighten,
-            confirmedValue = state.settings.cornerTriggerRangeDp,
-            isUpdating = state.isUpdating,
+        TriggerShapePreference(
+            shape = state.settings.triggerShape,
             enabled = state.canChangeSettings,
-            title = stringResource(R.string.corner_trigger_range_title),
-            summary = stringResource(R.string.corner_trigger_range_summary),
-            onPreviewChange = onCornerRangePreviewChange,
-            onCommit = onCornerTriggerRangeChange,
+            onShapeChange = onTriggerShapeChange,
         )
+        // @author bomo 只显示当前形状用得上的滑条（用户 2026-09-22 要求）：
+        // 扇形 → 半径；三角形 → 横向 + 纵向。不做"都画出来再置灰"，
+        // 避免用户以为灰色滑条调了会生效。
+        if (state.settings.triggerShape == TriggerShape.Triangle) {
+            RemoteDpSliderPreference(
+                icon = Icons.Rounded.SwapHoriz,
+                confirmedValue = state.settings.triggerHorizontalDp,
+                isUpdating = state.isUpdating,
+                enabled = state.canChangeSettings,
+                title = stringResource(R.string.trigger_horizontal_title),
+                summary = stringResource(R.string.trigger_horizontal_summary),
+                onPreviewChange = { dp ->
+                    onCornerRangePreviewChange(
+                        dp?.let {
+                            TriggerRangePreview(
+                                shape = TriggerShape.Triangle,
+                                rangeDp = state.settings.cornerTriggerRangeDp,
+                                horizontalDp = it,
+                                verticalDp = state.settings.triggerVerticalDp,
+                            )
+                        },
+                    )
+                },
+                onCommit = onTriggerHorizontalDpChange,
+                coerce = { ModulePreferences.coerceTriggerExtentDp(it) },
+                minDp = ModulePreferences.MIN_TRIGGER_EXTENT_DP,
+                maxDp = ModulePreferences.MAX_TRIGGER_EXTENT_DP,
+            )
+            RemoteDpSliderPreference(
+                icon = Icons.Rounded.SwapVert,
+                confirmedValue = state.settings.triggerVerticalDp,
+                isUpdating = state.isUpdating,
+                enabled = state.canChangeSettings,
+                title = stringResource(R.string.trigger_vertical_title),
+                summary = stringResource(R.string.trigger_vertical_summary),
+                onPreviewChange = { dp ->
+                    onCornerRangePreviewChange(
+                        dp?.let {
+                            TriggerRangePreview(
+                                shape = TriggerShape.Triangle,
+                                rangeDp = state.settings.cornerTriggerRangeDp,
+                                horizontalDp = state.settings.triggerHorizontalDp,
+                                verticalDp = it,
+                            )
+                        },
+                    )
+                },
+                onCommit = onTriggerVerticalDpChange,
+                coerce = { ModulePreferences.coerceTriggerExtentDp(it) },
+                minDp = ModulePreferences.MIN_TRIGGER_EXTENT_DP,
+                maxDp = ModulePreferences.MAX_TRIGGER_EXTENT_DP,
+            )
+        } else {
+            RemoteDpSliderPreference(
+                icon = Icons.Rounded.Straighten,
+                confirmedValue = state.settings.cornerTriggerRangeDp,
+                isUpdating = state.isUpdating,
+                enabled = state.canChangeSettings,
+                title = stringResource(R.string.corner_trigger_range_title),
+                summary = stringResource(R.string.corner_trigger_range_summary),
+                onPreviewChange = { dp ->
+                    onCornerRangePreviewChange(
+                        dp?.let {
+                            TriggerRangePreview(
+                                shape = TriggerShape.Sector,
+                                rangeDp = it,
+                                horizontalDp = state.settings.triggerHorizontalDp,
+                                verticalDp = state.settings.triggerVerticalDp,
+                            )
+                        },
+                    )
+                },
+                onCommit = onCornerTriggerRangeChange,
+            )
+        }
         // @author bomo 面板缩放滑条：写入远端配置后，侧边栏进程在**下次打开面板**时读取，
         // 因此调整后无需重启/重装即可看到效果。
         RemotePercentSliderPreference(
@@ -395,6 +490,36 @@ private fun SettingsCard(
     }
 }
 
+/**
+ * @author bomo 触发热区形状选择器；条目顺序即 [TriggerShape.entries] 顺序。
+ */
+@Composable
+private fun TriggerShapePreference(
+    shape: TriggerShape,
+    enabled: Boolean,
+    onShapeChange: (TriggerShape) -> Unit,
+) {
+    val shapes = TriggerShape.entries
+    val items =
+        listOf(
+            DropdownItem(text = stringResource(R.string.trigger_shape_sector)),
+            DropdownItem(text = stringResource(R.string.trigger_shape_triangle)),
+        )
+    OverlaySpinnerPreference(
+        items = items,
+        selectedIndex = shapes.indexOf(shape),
+        title = stringResource(R.string.trigger_shape_title),
+        summary = stringResource(R.string.trigger_shape_summary),
+        enabled = enabled,
+        startAction = { PreferenceIcon(Icons.Rounded.Category, enabled) },
+        onSelectedIndexChange = { index -> shapes.getOrNull(index)?.let(onShapeChange) },
+    )
+}
+
+/**
+ * @author bomo dp 数值滑条。默认按「角落触发范围」（扇形半径）钳制与取值；
+ * 三角形热区的横向 / 纵向长度通过 [coerce] 与 [minDp] / [maxDp] 覆盖为同一量纲的另一组范围。
+ */
 @Composable
 private fun RemoteDpSliderPreference(
     icon: ImageVector,
@@ -405,6 +530,9 @@ private fun RemoteDpSliderPreference(
     summary: String,
     onPreviewChange: (Int?) -> Unit,
     onCommit: (Int) -> Unit,
+    coerce: (Int) -> Int = { ModulePreferences.coerceCornerTriggerRangeDp(it) },
+    minDp: Int = ModulePreferences.MIN_CORNER_TRIGGER_RANGE_DP,
+    maxDp: Int = ModulePreferences.MAX_CORNER_TRIGGER_RANGE_DP,
 ) {
     var draftValue by rememberSaveable { mutableFloatStateOf(confirmedValue.toFloat()) }
     var isDragging by remember { mutableStateOf(false) }
@@ -419,7 +547,7 @@ private fun RemoteDpSliderPreference(
         value = draftValue,
         onValueChange = { value ->
             isDragging = true
-            val draft = ModulePreferences.coerceCornerTriggerRangeDp(value.roundToInt())
+            val draft = coerce(value.roundToInt())
             draftValue = draft.toFloat()
             onPreviewChange(draft)
         },
@@ -428,18 +556,12 @@ private fun RemoteDpSliderPreference(
         valueText = stringResource(R.string.dp_value, draftValue.roundToInt()),
         enabled = enabled,
         startAction = { PreferenceIcon(icon, enabled) },
-        valueRange =
-            ModulePreferences.MIN_CORNER_TRIGGER_RANGE_DP.toFloat()..
-                ModulePreferences.MAX_CORNER_TRIGGER_RANGE_DP.toFloat(),
-        steps =
-            ModulePreferences.MAX_CORNER_TRIGGER_RANGE_DP -
-                ModulePreferences.MIN_CORNER_TRIGGER_RANGE_DP -
-                1,
+        valueRange = minDp.toFloat()..maxDp.toFloat(),
+        steps = (maxDp - minDp - 1).coerceAtLeast(0),
         onValueChangeFinished = {
             isDragging = false
             onPreviewChange(null)
-            val committed =
-                ModulePreferences.coerceCornerTriggerRangeDp(draftValue.roundToInt())
+            val committed = coerce(draftValue.roundToInt())
             draftValue = committed.toFloat()
             if (committed != confirmedValue) onCommit(committed)
         },
@@ -496,9 +618,25 @@ private fun RemotePercentSliderPreference(
     )
 }
 
+/** @author bomo 触发热区预览快照：拖动任一条滑条时，用「其余项已确认值 + 本条草稿值」组成。 */
+private data class TriggerRangePreview(
+    val shape: TriggerShape,
+    val rangeDp: Int,
+    val horizontalDp: Int,
+    val verticalDp: Int,
+)
+
+/**
+ * @author bomo 触发热区预览。几何与命中判定同源（见 `CornerTriggerRegion`）：
+ * 扇形为四分之一圆；三角形以屏幕角落为直角顶点，两条直角边分别沿底边（横向）与侧边（纵向），
+ * 斜边朝内。预览只作示意，不参与任何手势判定。
+ */
 @Composable
 private fun CornerRangePreview(
+    shape: TriggerShape,
     rangeDp: Int,
+    horizontalDp: Int,
+    verticalDp: Int,
     leftEnabled: Boolean,
     rightEnabled: Boolean,
 ) {
@@ -506,11 +644,14 @@ private fun CornerRangePreview(
     val inactiveColor = MiuixTheme.colorScheme.onSurfaceVariantSummary
     Canvas(modifier = Modifier.fillMaxSize()) {
         val radius = rangeDp.dp.toPx()
+        val horizontal = horizontalDp.dp.toPx()
+        val vertical = verticalDp.dp.toPx()
+        val bottom = size.height
         val arcSize = Size(radius * 2f, radius * 2f)
         val strokeWidth = 2.dp.toPx()
         val dash = PathEffect.dashPathEffect(floatArrayOf(7.dp.toPx(), 5.dp.toPx()))
 
-        fun drawCorner(startAngle: Float, topLeft: Offset, enabled: Boolean) {
+        fun drawSector(startAngle: Float, topLeft: Offset, enabled: Boolean) {
             val color = if (enabled) activeColor else inactiveColor
             drawArc(
                 color = color.copy(alpha = if (enabled) 0.22f else 0.08f),
@@ -531,16 +672,43 @@ private fun CornerRangePreview(
             )
         }
 
-        drawCorner(
-            startAngle = 270f,
-            topLeft = Offset(-radius, size.height - radius),
-            enabled = leftEnabled,
-        )
-        drawCorner(
-            startAngle = 180f,
-            topLeft = Offset(size.width - radius, size.height - radius),
-            enabled = rightEnabled,
-        )
+        /** @param cornerX 直角顶点横坐标；[mirror] 为真时（右下角）直角边向左延伸。 */
+        fun drawTriangle(cornerX: Float, mirror: Boolean, enabled: Boolean) {
+            val color = if (enabled) activeColor else inactiveColor
+            val path =
+                Path().apply {
+                    moveTo(cornerX, bottom)
+                    lineTo(if (mirror) cornerX - horizontal else cornerX + horizontal, bottom)
+                    lineTo(cornerX, bottom - vertical)
+                    close()
+                }
+            drawPath(path, color = color.copy(alpha = if (enabled) 0.22f else 0.08f))
+            drawPath(
+                path,
+                color = color.copy(alpha = if (enabled) 0.82f else 0.30f),
+                style = Stroke(width = strokeWidth, pathEffect = dash),
+            )
+        }
+
+        when (shape) {
+            TriggerShape.Sector -> {
+                drawSector(
+                    startAngle = 270f,
+                    topLeft = Offset(-radius, bottom - radius),
+                    enabled = leftEnabled,
+                )
+                drawSector(
+                    startAngle = 180f,
+                    topLeft = Offset(size.width - radius, bottom - radius),
+                    enabled = rightEnabled,
+                )
+            }
+
+            TriggerShape.Triangle -> {
+                drawTriangle(cornerX = 0f, mirror = false, enabled = leftEnabled)
+                drawTriangle(cornerX = size.width, mirror = true, enabled = rightEnabled)
+            }
+        }
     }
 }
 

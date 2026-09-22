@@ -8,6 +8,12 @@ internal data class ModuleSettingsSnapshot(
     val leftCornerEnabled: Boolean = ModulePreferences.DEFAULT_CORNER_ENABLED,
     val rightCornerEnabled: Boolean = ModulePreferences.DEFAULT_CORNER_ENABLED,
     val cornerTriggerRangeDp: Int = ModulePreferences.DEFAULT_CORNER_TRIGGER_RANGE_DP,
+    /** @author bomo 触发热区形状（见 [TriggerShape]）；默认扇形，即改造前的原有行为。 */
+    val triggerShape: TriggerShape = TriggerShape.DEFAULT,
+    /** @author bomo 触发热区横向长度 dp（三角形使用）；未配置时沿用扇形半径值。 */
+    val triggerHorizontalDp: Int = ModulePreferences.DEFAULT_CORNER_TRIGGER_RANGE_DP,
+    /** @author bomo 触发热区纵向高度 dp（三角形使用）；未配置时沿用扇形半径值。 */
+    val triggerVerticalDp: Int = ModulePreferences.DEFAULT_CORNER_TRIGGER_RANGE_DP,
     /** @author bomo 「全部」面板整体缩放百分比（见 `ModulePreferences.KEY_PANEL_SCALE_PERCENT`）。 */
     val panelScalePercent: Int = ModulePreferences.DEFAULT_PANEL_SCALE_PERCENT,
     val pinsSaved: Boolean = false,
@@ -34,6 +40,18 @@ internal data class ModuleSettingsSnapshot(
             .putInt(
                 ModulePreferences.KEY_CORNER_TRIGGER_RANGE_DP,
                 ModulePreferences.coerceCornerTriggerRangeDp(cornerTriggerRangeDp),
+            )
+            .putInt(
+                ModulePreferences.KEY_TRIGGER_SHAPE,
+                triggerShape.storedValue,
+            )
+            .putInt(
+                ModulePreferences.KEY_TRIGGER_HORIZONTAL_DP,
+                ModulePreferences.coerceTriggerExtentDp(triggerHorizontalDp),
+            )
+            .putInt(
+                ModulePreferences.KEY_TRIGGER_VERTICAL_DP,
+                ModulePreferences.coerceTriggerExtentDp(triggerVerticalDp),
             )
             .putInt(
                 ModulePreferences.KEY_PANEL_SCALE_PERCENT,
@@ -90,6 +108,27 @@ internal data class ModuleSettingsSnapshot(
                         ModulePreferences.DEFAULT_CORNER_TRIGGER_RANGE_DP,
                     ),
                 )
+            // @author bomo 触发热区：形状默认扇形（即改造前的行为）；横/纵向长度未配置时
+            // 沿用扇形半径值，这样从扇形切到三角形时热区尺度不会突变。
+            val triggerShape =
+                TriggerShape.fromStoredValue(
+                    preferences.getInt(
+                        ModulePreferences.KEY_TRIGGER_SHAPE,
+                        TriggerShape.DEFAULT.storedValue,
+                    ),
+                )
+            fun storedTriggerExtentDp(key: String): Int =
+                ModulePreferences.coerceTriggerExtentDp(
+                    if (preferences.contains(key)) {
+                        preferences.getInt(key, cornerTriggerRangeDp)
+                    } else {
+                        cornerTriggerRangeDp
+                    },
+                )
+            val triggerHorizontalDp =
+                storedTriggerExtentDp(ModulePreferences.KEY_TRIGGER_HORIZONTAL_DP)
+            val triggerVerticalDp =
+                storedTriggerExtentDp(ModulePreferences.KEY_TRIGGER_VERTICAL_DP)
             val panelScalePercent =
                 ModulePreferences.coercePanelScalePercent(
                     preferences.getInt(
@@ -133,6 +172,9 @@ internal data class ModuleSettingsSnapshot(
                 leftCornerEnabled = leftEnabled,
                 rightCornerEnabled = rightEnabled,
                 cornerTriggerRangeDp = cornerTriggerRangeDp,
+                triggerShape = triggerShape,
+                triggerHorizontalDp = triggerHorizontalDp,
+                triggerVerticalDp = triggerVerticalDp,
                 panelScalePercent = panelScalePercent,
                 pinsSaved = pinsSaved,
                 pinnedComponents = pins,

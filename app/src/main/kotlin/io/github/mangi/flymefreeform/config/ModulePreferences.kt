@@ -9,6 +9,15 @@ internal object ModulePreferences {
     const val KEY_LEFT_CORNER_ENABLED = "corner_left_enabled"
     const val KEY_RIGHT_CORNER_ENABLED = "corner_right_enabled"
     const val KEY_CORNER_TRIGGER_RANGE_DP = "corner_trigger_range_dp"
+
+    /** @author bomo 触发热区形状（存 [TriggerShape.storedValue]）。 */
+    const val KEY_TRIGGER_SHAPE = "trigger_shape_v1"
+
+    /** @author bomo 触发热区横向长度（沿屏幕底边，dp）；矩形 / 三角形使用。 */
+    const val KEY_TRIGGER_HORIZONTAL_DP = "trigger_horizontal_dp_v1"
+
+    /** @author bomo 触发热区纵向高度（沿屏幕侧边，dp）；矩形 / 三角形使用。 */
+    const val KEY_TRIGGER_VERTICAL_DP = "trigger_vertical_dp_v1"
     const val KEY_CORNER_PINS = "corner_pins_v1"
     const val KEY_OUTSIDE_TAP_CLOSE_MODE = "outside_tap_close_mode_v1"
     const val KEY_HANDLE_SWIPE_UP_TO_MINI_ENABLED = "handle_swipe_up_to_mini_enabled"
@@ -49,6 +58,14 @@ internal object ModulePreferences {
     const val MAX_CORNER_TRIGGER_RANGE_DP = 160
 
     /**
+     * @author bomo 触发热区横/纵向长度（三角形用）的取值范围（dp）。
+     * **与扇形半径共用同一上下限**（用户 2026-09-22 定）：三者在热区里同属"延伸长度"，
+     * 各留一套数字只会让口径漂移；上限一致后，三角形拉到最大与扇形最大半径等价。
+     */
+    const val MIN_TRIGGER_EXTENT_DP = MIN_CORNER_TRIGGER_RANGE_DP
+    const val MAX_TRIGGER_EXTENT_DP = MAX_CORNER_TRIGGER_RANGE_DP
+
+    /**
      * 扇形最多固定几个应用（不含「更多」）：外圈最多 6 个 + 内圈最多 5 个 = 11。
      * 固定顺序即圈层顺序：前 6 个在外圈，第 7~11 个进内圈。
      */
@@ -74,6 +91,10 @@ internal object ModulePreferences {
 
     fun coerceCornerTriggerRangeDp(value: Int): Int =
         value.coerceIn(MIN_CORNER_TRIGGER_RANGE_DP, MAX_CORNER_TRIGGER_RANGE_DP)
+
+    /** @author bomo 触发热区横/纵向长度钳制（三角形用）。 */
+    fun coerceTriggerExtentDp(value: Int): Int =
+        value.coerceIn(MIN_TRIGGER_EXTENT_DP, MAX_TRIGGER_EXTENT_DP)
 
     /** @author bomo 面板缩放百分比钳制；下限防止条目小到点不中，上限即原尺寸。 */
     fun coercePanelScalePercent(value: Int): Int =

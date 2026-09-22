@@ -282,6 +282,16 @@ internal class ColorOsAllAppsWindow(
             displaySafe[0], displaySafe[1], displaySafe[2], maxOf(displaySafe[3], ime),
         )
         val bounds = scaledBounds(native)
+        // @author bomo 锚定与缩放的唯一可观测证据：几何算错时窗口位置会明显不对，
+        // 打这一行就能区分「方位没传到」还是「贴边距算错」。
+        // ⚠️ 必须放在下面的「参数未变化就提前 return」之前 —— 0.1.18 曾放在其后，
+        // 结果一次都没打出来（参数与 init 算出的相同 → 提前 return）。
+        log(
+            Log.INFO,
+            "PANEL_BOUNDS left=${bounds.left} top=${bounds.top} " +
+                "${bounds.width}x${bounds.height} leftSide=$leftSide scale=$panelScale",
+            null,
+        )
         val cardParams = card.layoutParams as? FrameLayout.LayoutParams
         if (cardParams != null && (cardParams.width != native.width || cardParams.height != native.height)) {
             cardParams.width = native.width
@@ -297,14 +307,6 @@ internal class ColorOsAllAppsWindow(
         params.x = bounds.left
         params.y = bounds.top
         if (attached) manager.updateViewLayout(root, params)
-        // @author bomo 锚定与缩放的唯一可观测证据：几何算错时窗口位置会明显不对，
-        // 打这一行就能区分「方位没传到」还是「贴边距算错」，不必再靠猜。
-        log(
-            Log.INFO,
-            "PANEL_BOUNDS left=${bounds.left} top=${bounds.top} " +
-                "${bounds.width}x${bounds.height} leftSide=$leftSide scale=$panelScale",
-            null,
-        )
     }
 
     /**

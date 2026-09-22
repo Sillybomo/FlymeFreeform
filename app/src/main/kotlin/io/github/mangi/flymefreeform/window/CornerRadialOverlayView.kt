@@ -71,7 +71,6 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import io.github.mangi.flymefreeform.config.ModulePreferences
 import io.github.mangi.flymefreeform.gesture.CornerSide
 import io.github.mangi.flymefreeform.gesture.RadialGeometry
 import io.github.mangi.flymefreeform.gesture.RadialLayout
@@ -769,6 +768,14 @@ internal class CornerRadialOverlayView(
         val safeWidth = (requestedWidth - radialInsets.left - radialInsets.right).coerceAtLeast(1f)
         val safeHeight = (requestedHeight - radialInsets.top - radialInsets.bottom).coerceAtLeast(1f)
         val systemIconDiameter = systemIconSize()
+        // @author bomo 内外圈数量一律取「实际」列表长度，不要用外圈上限常量推导。
+        // 原实现用外圈上限（ModulePreferences.OUTER_PINNED_APPS = 6）算内圈数，
+        // 于是径向条目总数 ≤ 6 时
+        // radialInnerCount 被算成 0 → RadialIconGeometry 的内圈半径保持 0f →
+        // 视图 `innerRadius <= 0f` 的门槛直接不布内圈。
+        // 表现为「外圈不到 6 个」或「内圈只有 1 个」时内圈整体消失（用户 2026-09-22 报告）。
+        val outerApps = outerApps()
+        val innerApps = innerApps()
         val metrics =
             AdaptiveOverlayGeometry.calculate(
                 width = requestedWidth.toFloat(),
@@ -776,17 +783,15 @@ internal class CornerRadialOverlayView(
                 safeInsets = safeInsets,
                 systemIconSize = systemIconDiameter,
                 density = resources.displayMetrics.density,
-                radialItemCount = minOf(catalog.radialApps.size, ModulePreferences.OUTER_PINNED_APPS) + 1,
-                radialInnerCount = (catalog.radialApps.size - ModulePreferences.OUTER_PINNED_APPS).coerceAtLeast(0),
+                radialItemCount = outerApps.size + 1,
+                radialInnerCount = innerApps.size,
                 radialInsets = radialInsets,
                 fontScale = resources.configuration.fontScale,
                 panelItemCount = catalog.panelApps.size,
                 anchorOnLeft = side == CornerSide.Left,
             )
         metricsState.value = metrics
-        // 双圈：前 OUTER_PINNED_APPS 个应用在外圈（含「更多」槽），其余进内圈。
-        val outerCount = outerApps().size
-        val innerApps = innerApps()
+        // 双圈：外圈 = 前 catalog.outerCount 个应用（含「更多」槽），其余进内圈。
         val outerLayout =
             RadialGeometry.layout(
                 side = side,
@@ -795,7 +800,7 @@ internal class CornerRadialOverlayView(
                 offsetX = radialInsets.left,
                 offsetY = radialInsets.top,
                 radius = metrics.radial.radius,
-                itemCount = outerCount + 1,
+                itemCount = outerApps.size + 1,
             )
         val innerCenters =
             if (innerApps.isEmpty() || metrics.radial.innerRadius <= 0f) {

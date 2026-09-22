@@ -71,15 +71,17 @@ internal class ColorOsRecentSection(
             val index = container.indexOfChild(appList).coerceAtLeast(0)
             val resolved = items.mapNotNull { component -> resolve(component) }
             if (resolved.isEmpty()) return false
-            val strip = buildStrip(panelView, resolved, onLaunchComponent, onItemClicked)
+            val built = buildStrip(panelView, resolved, onLaunchComponent, onItemClicked)
             container.addView(
-                strip,
+                built.root,
                 index,
                 LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ),
             )
+            // @author bomo 标题样式必须与原厂区块标题（「工具」/「应用」）一致（用户 2026-09-22 要求）。
+            syncHeaderStyleLater(built.header, panelView)
             log(Log.INFO, "RECENT_SECTION_ATTACHED count=${resolved.size}", null)
             true
         } catch (exception: Exception) {
@@ -92,6 +94,12 @@ internal class ColorOsRecentSection(
         val component: ComponentName,
         val label: String,
         val icon: Drawable,
+    )
+
+    /** @author bomo 自建区块的根视图与标题 TextView（标题样式需在挂载后再抄原厂）。 */
+    private data class BuiltStrip(
+        val root: View,
+        val header: TextView,
     )
 
     private fun resolve(component: ComponentName): RecentItem? =
@@ -112,22 +120,23 @@ internal class ColorOsRecentSection(
         items: List<RecentItem>,
         onLaunchComponent: (ComponentName) -> Unit,
         onItemClicked: () -> Unit,
-    ): View {
+    ): BuiltStrip {
         val textColor = themeColor(panelView)
         val column =
             LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(0, dp(4f), 0, dp(6f))
             }
-        column.addView(
+        val header =
             TextView(context).apply {
                 text = HEADER_TEXT
+                // 兜底字号：挂载后会被 syncHeaderStyleLater 换成原厂区块标题的真实样式。
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, HEADER_TEXT_SP)
                 setTextColor(textColor)
                 setPadding(dp(16f), dp(2f), dp(16f), dp(2f))
                 includeFontPadding = false
-            },
-        )
+            }
+        column.addView(header)
         val row =
             LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -159,7 +168,63 @@ internal class ColorOsRecentSection(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
-        return column
+        return BuiltStrip(column, header)
+    }
+
+    /**
+     * @author bomo 把「最近小窗」标题的文字样式换成原厂区块标题（「工具」/「应用」）的样式。
+     *
+     * 原厂 `app_list` 是 RecyclerView，插入这一刻它可能还没 layout（此时取不到标题 view），
+     * 所以先等一帧、必要时再等一帧；两帧后仍拿不到就保留兜底字号并打日志便于定位。
+     * **逐项复制而非写死数值**：原厂换主题/改字号时会自动跟随。
+     */
+    private fun syncHeaderStyleLater(header: TextView, panelView: View) {
+        header.post {
+            if (applyNativeHeaderStyle(header, panelView)) {
+                log(Log.INFO, "RECENT_SECTION_HEADER_STYLE_SYNCED", null)
+                return@post
+            }
+            header.post {
+                if (applyNativeHeaderStyle(header, panelView)) {
+                    log(Log.INFO, "RECENT_SECTION_HEADER_STYLE_SYNCED_LATE", null)
+                } else {
+                    log(Log.WARN, "RECENT_SECTION_HEADER_STYLE_FALLBACK sp=$HEADER_TEXT_SP", null)
+                }
+            }
+        }
+    }
+
+    /**
+     * @return 是否成功抄到原厂区块标题样式；取不到返回 false（调用方保留兜底样式）
+     */
+    private fun applyNativeHeaderStyle(header: TextView, panelView: View): Boolean {
+        val native = findNativeSectionHeader(panelView) ?: return false
+        header.setTextSize(TypedValue.COMPLEX_UNIT_PX, native.textSize)
+        header.typeface = native.typeface
+        header.setTextColor(native.currentTextColor)
+        header.letterSpacing = native.letterSpacing
+        header.textScaleX = native.textScaleX
+        header.includeFontPadding = native.includeFontPadding
+        return true
+    }
+
+    /** 广度优先在原厂面板里找区块标题（先命中「工具」）。 */
+    private fun findNativeSectionHeader(panelView: View): TextView? {
+        if (panelView !is ViewGroup) return null
+        val queue = ArrayDeque<View>()
+        queue.add(panelView)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < MAX_SCAN_VIEWS) {
+            visited++
+            val node = queue.removeFirst()
+            if (node is TextView && node.text?.toString()?.trim() in NATIVE_SECTION_TITLES) {
+                return node
+            }
+            if (node is ViewGroup) {
+                for (index in 0 until node.childCount) queue.add(node.getChildAt(index))
+            }
+        }
+        return null
     }
 
     private fun buildItem(item: RecentItem, textColor: Int, onClick: () -> Unit): View {
@@ -261,6 +326,15 @@ internal class ColorOsRecentSection(
 
         /** 原厂面板标题文本，用于定位其 TextView 颜色。 */
         const val NATIVE_TITLE_TEXT = "全部"
+
+        /**
+         * @author bomo 原厂面板里的区块标题文本，用于定位标题样式并保持一致。
+         * 顺序即广度优先命中的优先级（先「工具」后「应用」）。
+         */
+        val NATIVE_SECTION_TITLES = setOf("工具", "应用")
+
+        /** 视图树扫描上限，防止原厂结构变化时遍历无界。 */
+        const val MAX_SCAN_VIEWS = 256
 
         const val HEADER_TEXT_SP = 13f
         const val LABEL_TEXT_SP = 11f

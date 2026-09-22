@@ -222,7 +222,8 @@ internal class LauncherHookInstaller(
             displayHeight = height,
             touchSlop = ViewConfiguration.get(owner).scaledTouchSlop.toFloat(),
             density = metrics.density,
-            triggerRangeDp = settings.cornerTriggerRangeDp,
+            // @author bomo 热区随设置的形状/宽高变化（三角形可横长纵短）。
+            triggerZone = CornerTriggerRegion.of(settings, metrics.density),
             leftEnabled = settings.leftCornerEnabled,
             rightEnabled = settings.rightCornerEnabled,
         ).takeIf { config ->
@@ -231,7 +232,7 @@ internal class LauncherHookInstaller(
                 y = event.rawY,
                 displayWidth = config.displayWidth,
                 displayHeight = config.displayHeight,
-                radius = config.triggerRadius,
+                zone = config.triggerZone,
                 leftEnabled = config.leftEnabled,
                 rightEnabled = config.rightEnabled,
             ) != null

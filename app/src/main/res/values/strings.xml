@@ -37,7 +37,15 @@
     <string name="right_corner_title">右下角手势</string>
     <string name="right_corner_summary">从右下角斜向内上滑呼出扇形菜单</string>
     <string name="corner_trigger_range_title">角落触发范围</string>
-    <string name="corner_trigger_range_summary">范围越大越容易呼出；范围内的系统手势由扇形菜单接管</string>
+    <string name="corner_trigger_range_summary">扇形展开半径；范围内手势由扇形菜单接管</string>
+    <string name="trigger_shape_title">触发热区形状</string>
+    <string name="trigger_shape_summary">扇形按半径展开；三角形可分别设置横向与纵向长度</string>
+    <string name="trigger_shape_sector">扇形</string>
+    <string name="trigger_shape_triangle">三角形</string>
+    <string name="trigger_horizontal_title">热区横向长度</string>
+    <string name="trigger_horizontal_summary">沿屏幕底边的长度；直角边之一</string>
+    <string name="trigger_vertical_title">热区纵向高度</string>
+    <string name="trigger_vertical_summary">沿屏幕侧边的高度；直角边之一</string>
     <string name="dp_value">%1$d dp</string>
     <string name="percent_value">%1$d%%</string>
     <string name="panel_scale_title">面板缩放</string>
