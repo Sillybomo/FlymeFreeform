@@ -276,6 +276,7 @@ internal class ColorOsAllAppsEndpoint(
                             }
                         },
                         onFailure = ::reportFailure,
+                        log = log,
                     )
                     current.window = window
                     window.show()
@@ -308,6 +309,9 @@ internal class ColorOsAllAppsEndpoint(
         }
         val next = Request(id, deadline, reply)
         next.leftSide = panelLeftSide
+        // @author bomo 判据：方位是否真的从 system_server 传到侧边栏进程。
+        // 缺键时为 null（此时面板回退原厂标志位，等同于旧行为）。
+        log(Log.INFO, "PANEL_SIDE left=$panelLeftSide", null)
         request = next
         reply.binder.linkToDeath(next.death, 0)
         next.deathLinked = true

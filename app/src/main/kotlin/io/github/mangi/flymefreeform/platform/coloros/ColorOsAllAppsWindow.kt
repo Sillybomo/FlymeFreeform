@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.PixelFormat
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -34,6 +35,8 @@ internal class ColorOsAllAppsWindow(
     private val onExitStarted: () -> Unit,
     private val beforeTool: (() -> Unit) -> Unit,
     private val onFailure: (Exception) -> Unit,
+    /** @author bomo 诊断日志出口（默认丢弃，便于单测与旧调用点不受影响）。 */
+    private val log: (Int, String, Throwable?) -> Unit = { _, _, _ -> },
 ) {
     private val manager = context.getSystemService(WindowManager::class.java)
     private val card = content.createCard()
@@ -294,22 +297,46 @@ internal class ColorOsAllAppsWindow(
         params.x = bounds.left
         params.y = bounds.top
         if (attached) manager.updateViewLayout(root, params)
+        // @author bomo 锚定与缩放的唯一可观测证据：几何算错时窗口位置会明显不对，
+        // 打这一行就能区分「方位没传到」还是「贴边距算错」，不必再靠猜。
+        log(
+            Log.INFO,
+            "PANEL_BOUNDS left=${bounds.left} top=${bounds.top} " +
+                "${bounds.width}x${bounds.height} leftSide=$leftSide scale=$panelScale",
+            null,
+        )
     }
 
     /**
-     * @author bomo 「全部」面板整体缩小的边界换算：窗口取原生边界的 panelScale 倍；
-     * 竖屏手机模式在原生盒内垂直居中（保持居中观感），其余模式保持原顶部锚定。
+     * @author bomo 「全部」面板整体缩小的边界换算。
+     *
+     * **关键：缩放后必须保留「被锚定那一侧」的贴边距，而不是固定左边缘坐标。**
+     * 原生面板宽度几乎满屏（PLZ110 上 1104 / 屏宽 1216 = 90.8%，恰好等于
+     * `屏宽 − 2×minMargin`），于是 `left = if (leftSide) gap else 屏宽 − gap − 面板宽`
+     * 两种算法**算出的 left 几乎相同**（都 ≈ 56），原生面板本来就是左右对称居中的。
+     * 因此缩小后若沿用 `native.left`，无论从哪侧呼出都会落到左边
+     * （0.1.16 / 0.1.17 的实际表现）。
+     *
+     * 修法：左侧呼出对齐原生盒的左边缘，右侧呼出对齐原生盒的**右边缘**。
+     *
+     * 垂直方向：竖屏在原生盒内居中，其余模式保持原顶部锚定。
      */
     private fun scaledBounds(native: AllAppsPanelGeometry.Bounds): AllAppsPanelGeometry.Bounds {
         val width = (native.width * panelScale).toInt().coerceAtLeast(1)
         val height = (native.height * panelScale).toInt().coerceAtLeast(1)
+        val left =
+            if (leftSide) {
+                native.left
+            } else {
+                native.left + native.width - width
+            }
         val top =
             if (mode == AllAppsPanelGeometry.Mode.Portrait) {
                 native.top + (native.height - height) / 2
             } else {
                 native.top
             }
-        return AllAppsPanelGeometry.Bounds(native.left, top, width, height)
+        return AllAppsPanelGeometry.Bounds(left, top, width, height)
     }
 
     /**
