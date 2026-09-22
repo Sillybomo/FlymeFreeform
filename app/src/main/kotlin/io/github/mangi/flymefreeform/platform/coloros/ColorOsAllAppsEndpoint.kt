@@ -303,10 +303,10 @@ internal class ColorOsAllAppsEndpoint(
      * @param panelLeftSide 本次呼出方位（null = 未下发，回退原厂标志位）。
      */
     private fun prepare(id: String, deadline: Long, panelLeftSide: Boolean?, reply: Messenger) {
-        // @author bomo 面板缩放等设置的生效依赖「打开面板时拉取最新配置」：
-        // LSPosed 远端偏好的跨进程变更监听不工作（证据与说明见
-        // ProcessConfiguration.refreshNow），不主动拉取则侧边栏快照永远停留在
-        // 进程启动时的值——表现为滑条拖了、面板大小不变。
+        // @author bomo 呼出面板时尝试刷新配置快照。实测（2026-09-23）：LSPosed 远端偏好
+        // 的读取是 start() 时的**进程内缓存**，此调用当前拿不到新值；设置的生效时机 =
+        // Hook 进程重启（重装 / 服务重连 / 重启手机）。保留调用，将来 LSPosed 修复
+        // 跨进程通知或缓存后，面板缩放将无需改动即自动变为真·热生效。
         configuration.refreshNow()
         if (request != null || !environmentAllowed() || !SidebarProtocol.isValidDeadline(deadline, SystemClock.uptimeMillis(), SidebarProtocol.PREPARE_TIMEOUT_MS)) {
             send(reply, id, SidebarProtocol.ABORTED)

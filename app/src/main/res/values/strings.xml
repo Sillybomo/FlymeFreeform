@@ -49,7 +49,7 @@
     <string name="dp_value">%1$d dp</string>
     <string name="percent_value">%1$d%%</string>
     <string name="panel_scale_title">面板缩放</string>
-    <string name="panel_scale_summary">「全部」面板的大小；调整后下次打开面板生效，无需重启</string>
+    <string name="panel_scale_summary">「全部」面板的大小；调整后重启手机生效</string>
     <string name="radial_apps_title">扇形应用</string>
     <string name="radial_apps_recent_summary">首次使用时自动显示最近使用的六个应用</string>
     <string name="radial_apps_empty_summary">未固定应用，扇形中只显示“更多”</string>

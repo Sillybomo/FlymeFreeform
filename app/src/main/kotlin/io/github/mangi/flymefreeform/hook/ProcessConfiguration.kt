@@ -37,13 +37,14 @@ internal class ProcessConfiguration(
     }
 
     /**
-     * @author bomo 主动重读远端配置（不依赖跨进程变更推送）。
+     * @author bomo 主动重读远端配置。
      *
-     * LSPosed 远端偏好的 `OnSharedPreferenceChangeListener` **不会跨进程回调**
-     * （2026-09-22 实测：App 进程写入后，Hook 进程侧无任何 `MODULE_STATE_*` 记录，
-     * 快照永远停留在 start() 时的值），因此需要「不重启即生效」的设置
-     * （如面板缩放）必须在消费点之前由本方法主动拉取。
-     * 读取本身走 provider，是实时的；刷新后照常通知 [listeners]。
+     * **⚠️ 当前实际无效（2026-09-23 实测）**：LSPosed 远端偏好的读取是 `start()` 时的
+     * **进程内缓存** —— 配置库中 `panel_scale_percent_v1` 已更新而本方法重读仍得旧值，
+     * 且 `OnSharedPreferenceChangeListener` 不跨进程回调。因此 Hook 进程内设置的
+     * 生效时机 = **Hook 进程重启**（重装 / 服务重连 / 整机重启）。
+     * 本调用保留作占位：将来 LSPosed 修复跨进程通知或缓存后，接入方无需改动即自动
+     * 变为真·热生效。
      */
     fun refreshNow() {
         val store = preferences ?: return
