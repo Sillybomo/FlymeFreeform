@@ -43,6 +43,15 @@ internal class ColorOsAllAppsWindow(
     private val dimensions = content.dimensions()
     private val mode = content.mode()
     private val leftSide = content.leftSide()
+
+    /**
+     * @author bomo 「全部」面板整体缩放比例，默认缩小 1/3（面板占用屏幕过大）。
+     * 内容按原生尺寸布局后等比缩放，网格间距随之等比缩小。
+     * 可经 Settings.Global 覆盖：`adb shell settings put global flymefreeform_panel_scale 60`，
+     * 范围 50~100，下次打开面板即生效。
+     */
+    private val panelScale = tunedInt(PANEL_SCALE_KEY, PANEL_SCALE_DEFAULT_PERCENT)
+        .coerceIn(PANEL_SCALE_MIN_PERCENT, 100) / 100f
     private var insets: WindowInsets? = null
     private var displayWidth = 0
     private var displayHeight = 0
@@ -120,17 +129,18 @@ internal class ColorOsAllAppsWindow(
             displayWidth, displayHeight, dimensions, mode, leftSide,
             safe.left, safe.top, safe.right, safe.bottom,
         )
+        val scaled = scaledBounds(initial)
         // 窗口收缩成面板大小：窗口模糊才会只作用于面板背后，而不是整屏。
         // 面板入场/退场缩放范围为 0.3~1.0，不会超出窗口被裁切。
         windowParams = WindowManager.LayoutParams(
-            initial.width, initial.height, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            scaled.width, scaled.height, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = initial.left
-            y = initial.top
+            x = scaled.left
+            y = scaled.top
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
             setFitInsetsTypes(0)
@@ -140,7 +150,9 @@ internal class ColorOsAllAppsWindow(
                 runCatching { setter.invoke(this, tunedInt(BLUR_RADIUS_KEY, BLUR_BEHIND_RADIUS_PX)) }
             }
         }
-        root.addView(card, FrameLayout.LayoutParams(-1, -1))
+        // @author bomo 面板整体缩小：内容必须按原生尺寸布局（网格条目是固定 dp，直接缩窗会挤压变形），
+        // 卡片保持原生 LayoutParams，再由 applyBaseTransform() 等比缩放贴满缩小后的窗口。
+        root.addView(card, FrameLayout.LayoutParams(initial.width, initial.height))
         root.setOnTouchListener { _, event ->
             if (event.actionMasked == MotionEvent.ACTION_UP) dismiss()
             true
@@ -167,18 +179,18 @@ internal class ColorOsAllAppsWindow(
         if (closed) return true
         if (!waitingForFirstFrame) return true
         return try {
-            // 卡片填满窗口，尺寸与窗口一致；不能再拿 layoutParams 比较（那是 MATCH_PARENT = -1）。
+            // 卡片按原生面板尺寸（自身 LayoutParams）布局完成即就绪；窗口已缩小，不能再与窗口尺寸比较。
+            val cardParams = card.layoutParams as FrameLayout.LayoutParams
             if (root.width <= 0 || root.height <= 0 || insets == null ||
-                card.isLayoutRequested || card.width != root.width || card.height != root.height ||
+                card.isLayoutRequested || card.width != cardParams.width || card.height != cardParams.height ||
                 !content.attachBlur()
             ) return false
             // 平台背景模糊已生效时关闭窗口级模糊，避免双重模糊与额外开销。
             if (content.platformGlass) disableWindowBlur()
-            card.pivotX = card.width / 2f
-            card.pivotY = card.height / 2f
+            applyBaseTransform()
             val initial = AllAppsPanelMotion.enter(0f)
-            card.scaleX = initial.scale
-            card.scaleY = initial.scale
+            card.scaleX = initial.scale * panelScale
+            card.scaleY = initial.scale * panelScale
             content.view.alpha = initial.alpha
             card.alpha = 1f
             card.visibility = View.VISIBLE
@@ -247,14 +259,21 @@ internal class ColorOsAllAppsWindow(
         if (!exiting && !content.leaveSearch()) dismiss()
     }
 
-    /** 窗口本身即面板，尺寸/位置直接写在窗口参数上；卡片始终填满窗口。 */
+    /** 窗口本身即面板，尺寸/位置直接写在窗口参数上；卡片始终按原生面板尺寸布局。 */
     private fun placeCard() {
         if (closed || displayWidth <= 0 || displayHeight <= 0) return
         val ime = insets?.getInsets(WindowInsets.Type.ime())?.bottom ?: 0
-        val bounds = AllAppsPanelGeometry.calculate(
+        val native = AllAppsPanelGeometry.calculate(
             displayWidth, displayHeight, dimensions, mode, leftSide,
             displaySafe[0], displaySafe[1], displaySafe[2], maxOf(displaySafe[3], ime),
         )
+        val bounds = scaledBounds(native)
+        val cardParams = card.layoutParams as? FrameLayout.LayoutParams
+        if (cardParams != null && (cardParams.width != native.width || cardParams.height != native.height)) {
+            cardParams.width = native.width
+            cardParams.height = native.height
+            card.layoutParams = cardParams
+        }
         val params = windowParams ?: return
         if (params.width == bounds.width && params.height == bounds.height &&
             params.x == bounds.left && params.y == bounds.top
@@ -264,6 +283,33 @@ internal class ColorOsAllAppsWindow(
         params.x = bounds.left
         params.y = bounds.top
         if (attached) manager.updateViewLayout(root, params)
+    }
+
+    /**
+     * @author bomo 「全部」面板整体缩小的边界换算：窗口取原生边界的 panelScale 倍；
+     * 竖屏手机模式在原生盒内垂直居中（保持居中观感），其余模式保持原顶部锚定。
+     */
+    private fun scaledBounds(native: AllAppsPanelGeometry.Bounds): AllAppsPanelGeometry.Bounds {
+        val width = (native.width * panelScale).toInt().coerceAtLeast(1)
+        val height = (native.height * panelScale).toInt().coerceAtLeast(1)
+        val top =
+            if (mode == AllAppsPanelGeometry.Mode.Portrait) {
+                native.top + (native.height - height) / 2
+            } else {
+                native.top
+            }
+        return AllAppsPanelGeometry.Bounds(native.left, top, width, height)
+    }
+
+    /**
+     * @author bomo 基础缩放变换：卡片按原生尺寸布局，围绕中心缩放并做平移补偿，
+     * 使缩放后的可视区域恰好铺满缩小后的窗口（入场/退场动画在此基础上继续乘动画比例）。
+     */
+    private fun applyBaseTransform() {
+        card.pivotX = card.width / 2f
+        card.pivotY = card.height / 2f
+        card.translationX = -card.width * (1f - panelScale) / 2f
+        card.translationY = -card.height * (1f - panelScale) / 2f
     }
 
     private var windowBlurDisabled = false
@@ -297,10 +343,9 @@ internal class ColorOsAllAppsWindow(
         // 材质底色不参与入场渐变，只有内容淡入；避免暗色桌面透入后再变亮。
         card.alpha = if (exiting) frame.alpha else 1f
         content.view.alpha = if (exiting) 1f else frame.alpha
-        card.pivotX = card.width / 2f
-        card.pivotY = card.height / 2f
-        card.scaleX = frame.scale
-        card.scaleY = frame.scale
+        applyBaseTransform()
+        card.scaleX = frame.scale * panelScale
+        card.scaleY = frame.scale * panelScale
         content.updateBlur(if (exiting) frame.alpha else 1f)
         if (exiting && (frame.alpha <= AllAppsPanelMotion.EXIT_ALPHA_THRESHOLD || elapsed >= AllAppsPanelMotion.MAX_DURATION_MS)) {
             finishExit()
@@ -315,8 +360,8 @@ internal class ColorOsAllAppsWindow(
         entering = false
         card.alpha = 1f
         content.view.alpha = 1f
-        card.scaleX = 1f
-        card.scaleY = 1f
+        card.scaleX = panelScale
+        card.scaleY = panelScale
         content.updateBlur(1f)
         if (!notified) {
             notified = true
@@ -376,5 +421,14 @@ internal class ColorOsAllAppsWindow(
         /** 窗口模糊回退路径的模糊半径（像素）默认值；对齐原生 integer/edit_panel_platform_blur_radius=300。 */
         const val BLUR_BEHIND_RADIUS_PX = 300
         const val BLUR_RADIUS_KEY = "flymefreeform_blur_radius"
+
+        /** @author bomo 面板整体缩放默认值（百分比）：67 = 缩小 1/3。 */
+        const val PANEL_SCALE_DEFAULT_PERCENT = 67
+
+        /** @author bomo 面板整体缩放下限（百分比）；再小会难以点按条目。 */
+        const val PANEL_SCALE_MIN_PERCENT = 50
+
+        /** 覆盖键：`adb shell settings put global flymefreeform_panel_scale 60` */
+        const val PANEL_SCALE_KEY = "flymefreeform_panel_scale"
     }
 }
