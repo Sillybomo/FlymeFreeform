@@ -22,9 +22,18 @@ internal object RadialIconGeometry {
 
     /**
      * 内圈与外圈图标之间的径向间隙（dp，按图标边缘到边缘计）。
-     * 间隙过小两圈视觉粘连、滑选跨圈歧义；过大则内圈过度贴近角落。
+     *
+     * @author bomo 由 12dp 逐步调到 18dp（用户 2026-09-22 实机连试 24 / 16 / 20 后定稿：20 偏大、16 略紧）。
+     * 该间隙在算法里是**恒等量**（与图标直径无关），改这个值即精确生效。
+     *
+     * 为什么 12dp 会"粘"住：两圈中心距 = (外圈直径 + 内圈直径) / 2 + 间隙，
+     * 而选中判定（`RadialGeometry.selection`）只要手指仍在原选中槽位的
+     * `keepRadius`（= 图标直径 × 1.25）内就保持不变。图标同为 47.5dp 时：
+     * `中心距 − keepRadius = 间隙 − 0.25 × 直径 = 间隙 − 11.875dp`，
+     * 12dp 只余 0.125dp（等于没有，跨圈必然切不过去），18dp 余 6.125dp（手感均衡）。
+     * 不宜超过 ~30dp：内圈半径随之间变小，内圈相邻弦长不足会把内圈图标压小。
      */
-    private const val RING_GAP_DP = 12f
+    private const val RING_GAP_DP = 18f
 
     fun fit(
         width: Float,

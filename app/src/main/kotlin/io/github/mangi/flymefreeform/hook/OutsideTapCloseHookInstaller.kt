@@ -53,6 +53,7 @@ internal class OutsideTapCloseHookInstaller(
                     windowStateClass = windowStateClass,
                     captionClass = captionClass,
                     onFailure = ::logFailure,
+                    onDiagnostic = ::logDiagnostic,
                     environmentAllowed = environment::isModuleAllowed,
                 )
             module
@@ -126,12 +127,16 @@ internal class OutsideTapCloseHookInstaller(
         }
     }
 
-    private fun logFailure(code: String, throwable: Throwable) {
+    /** @param throwable 诊断码（状态类）传 null，异常类传具体异常。 */
+    private fun logFailure(code: String, throwable: Throwable?) {
         val now = SystemClock.uptimeMillis()
         if (now - lastFailureLogAt < FAILURE_LOG_INTERVAL_MS) return
         lastFailureLogAt = now
         module.log(Log.WARN, TAG, code, throwable)
     }
+
+    /** @author bomo 状态类诊断码（非异常），与 [logFailure] 共用限流窗口。 */
+    private fun logDiagnostic(code: String) = logFailure(code, null)
 
     private class ColorOsOutsideTapAccess(
         listenerClass: Class<*>,
@@ -141,6 +146,7 @@ internal class OutsideTapCloseHookInstaller(
         windowStateClass: Class<*>,
         captionClass: Class<*>,
         private val onFailure: (String, Throwable) -> Unit,
+        private val onDiagnostic: (String) -> Unit,
         private val environmentAllowed: () -> Boolean,
     ) {
         private val controllerField = listenerClass.requiredField("this$0")
@@ -403,9 +409,12 @@ internal class OutsideTapCloseHookInstaller(
         fun closeIfStillValid(listener: Any, task: Any) {
             if (!environmentAllowed()) return
             val controller = controllerField.get(listener) ?: return
-            if (getTopZoomTask.invokeUnwrapped(controller) !== task || !isOrdinaryZoom(controller, task)) {
-                return
-            }
+            // @author bomo 原实现还要求「此刻该 task 仍是 getTopZoomTask」，但本方法是在原厂
+            // `onPointerEvent` 执行**之后**才被调用的，而原厂处理这次窗外点击时可能已经改变了
+            // 顶层小窗（焦点转移等）→ 校验失败 → 点窗外关不掉（用户 2026-09-22 反馈的
+            // "会被系统的逻辑取代"即指此处）。改为只要求「仍是普通小窗态」；
+            // task 取自本次手势 DOWN 时刻，不会误关别的小窗。
+            if (!isOrdinaryZoom(controller, task)) return
             exitFlexibleTask.invokeUnwrapped(controller, task, true, 0, 0)
         }
 
@@ -433,14 +442,25 @@ internal class OutsideTapCloseHookInstaller(
                 engine.interrupt()
                 return null
             }
-            // 只有标题输入层已从 DOWN 起接管窗外区域时才启用关闭判定。
+            // @author bomo 修「点击小窗外部偶尔关不掉」（用户 2026-09-22 反馈）：
+            // 原先此处传 captured = isProtected(task)，把关闭能力绑死在「我们注入的
+            // touchable region 仍生效」这个状态上。而该状态会被 clearProtection
+            // （菜单展开、非普通小窗态、IME/排除区变化…）以及系统自身的 region 更新冲掉；
+            // 一旦落到未保护态，用户的窗外点击就由原厂逻辑接管、我们的关闭判定不启用 ——
+            // 表现正是「偶尔点外部无反应，只能走标题栏三个点 → 关闭」。
+            // 坐标已由上面的 isOutsideEligibleRegion 把关（在窗外，且不在其他小窗 /
+            // 状态栏 / 输入法 / 排除区内），事件能送到标题输入层本身就说明这次点击被标题层接管，
+            // 因此不需要再依赖注入状态。引擎侧 captured 语义保留（单测覆盖），此处按「已接管」传。
+            if (!isProtected(task)) {
+                onDiagnostic("OUTSIDE_TAP_UNPROTECTED_REGION")
+            }
             engine.begin(
                 task = task,
                 pointerId = event.getPointerId(0),
                 x = event.rawX,
                 y = event.rawY,
                 eventTime = event.eventTime,
-                captured = isProtected(task),
+                captured = true,
             )
             return null
         }

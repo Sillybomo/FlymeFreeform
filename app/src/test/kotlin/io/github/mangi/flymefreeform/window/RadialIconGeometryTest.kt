@@ -113,6 +113,37 @@ class RadialIconGeometryTest {
         }
     }
 
+    /**
+     * @author bomo 内圈与外圈必须留足径向间隙（用户 2026-09-22 反馈两圈太近、滑选易误触）。
+     * 该间隙在算法里是恒等量（与图标直径无关），这里钉住下限防止以后被调回去。
+     */
+    @Test
+    fun innerRingKeepsEnoughGapFromOuterRing() {
+        for (outerCount in 1..maxSlots) {
+            for (innerCount in 1..5) {
+                val metrics =
+                    RadialIconGeometry.fit(
+                        400f, 890f, 1f, OverlaySafeInsets(), outerCount, innerCount,
+                    )
+                val outerInnerEdge = metrics.radius - metrics.iconDiameter / 2f
+                val innerOuterEdge = metrics.innerRadius + metrics.innerIconDiameter / 2f
+                val gap = outerInnerEdge - innerOuterEdge
+                assertTrue("gap=$gap outer=$outerCount inner=$innerCount", gap >= 18f)
+                assertTrue("inner must be inside outer", metrics.innerRadius > 0f)
+                assertTrue(metrics.innerRadius < metrics.radius)
+                // 误触的根源不是"看着近"，而是两圈中心距 ≤ 保持半径：
+                // RadialGeometry.selection 只要手指还在原选中的 keepRadius 内就"粘住"不换，
+                // 中心距一旦 ≤ keepRadius，滑到另一圈图标上仍被判为原选中，跨圈切不过去。
+                val ringDistance = metrics.radius - metrics.innerRadius
+                assertTrue(
+                    "ringDistance=$ringDistance must exceed keepRadius=${metrics.selectionKeepRadius} " +
+                        "(outer=$outerCount inner=$innerCount)",
+                    ringDistance > metrics.selectionKeepRadius,
+                )
+            }
+        }
+    }
+
     @Test
     fun exhaustedSafeAreaProducesHiddenGeometry() {
         val metrics = fit(insets = OverlaySafeInsets(left = 400f))
