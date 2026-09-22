@@ -8,6 +8,8 @@ internal data class ModuleSettingsSnapshot(
     val leftCornerEnabled: Boolean = ModulePreferences.DEFAULT_CORNER_ENABLED,
     val rightCornerEnabled: Boolean = ModulePreferences.DEFAULT_CORNER_ENABLED,
     val cornerTriggerRangeDp: Int = ModulePreferences.DEFAULT_CORNER_TRIGGER_RANGE_DP,
+    /** @author bomo 「全部」面板整体缩放百分比（见 `ModulePreferences.KEY_PANEL_SCALE_PERCENT`）。 */
+    val panelScalePercent: Int = ModulePreferences.DEFAULT_PANEL_SCALE_PERCENT,
     val pinsSaved: Boolean = false,
     val pinnedComponents: List<ComponentName> = emptyList(),
     val innerPinsSaved: Boolean = false,
@@ -32,6 +34,10 @@ internal data class ModuleSettingsSnapshot(
             .putInt(
                 ModulePreferences.KEY_CORNER_TRIGGER_RANGE_DP,
                 ModulePreferences.coerceCornerTriggerRangeDp(cornerTriggerRangeDp),
+            )
+            .putInt(
+                ModulePreferences.KEY_PANEL_SCALE_PERCENT,
+                ModulePreferences.coercePanelScalePercent(panelScalePercent),
             )
             .putInt(
                 ModulePreferences.KEY_OUTSIDE_TAP_CLOSE_MODE,
@@ -84,6 +90,13 @@ internal data class ModuleSettingsSnapshot(
                         ModulePreferences.DEFAULT_CORNER_TRIGGER_RANGE_DP,
                     ),
                 )
+            val panelScalePercent =
+                ModulePreferences.coercePanelScalePercent(
+                    preferences.getInt(
+                        ModulePreferences.KEY_PANEL_SCALE_PERCENT,
+                        ModulePreferences.DEFAULT_PANEL_SCALE_PERCENT,
+                    ),
+                )
             val outsideTapCloseMode =
                 OutsideTapCloseMode.fromStoredValue(
                     preferences.getInt(
@@ -120,6 +133,7 @@ internal data class ModuleSettingsSnapshot(
                 leftCornerEnabled = leftEnabled,
                 rightCornerEnabled = rightEnabled,
                 cornerTriggerRangeDp = cornerTriggerRangeDp,
+                panelScalePercent = panelScalePercent,
                 pinsSaved = pinsSaved,
                 pinnedComponents = pins,
                 outsideTapCloseMode = outsideTapCloseMode,

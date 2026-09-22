@@ -19,6 +19,12 @@ import java.lang.reflect.Proxy
 internal class ColorOsAllAppsContent(
     loader: ClassLoader,
     /**
+     * @author bomo system_server 按手势真实方位下发的呼出侧；null 表示未下发。
+     * 原厂 `MainPanelMainView.getMIsLeft()` 只在原厂自己的面板流程里被写入，
+     * 本模块自建面板从不经过它 → 读到的恒为默认值（左右都贴左），故需外部覆盖。
+     */
+    private val leftSideOverride: Boolean? = null,
+    /**
      * 「最近小窗」区块的数据源（system_server 侧写入远端配置）。
      * 仅在构造与首帧各读一次；无数据时不插入区块，保持原厂面板外观不变。
      */
@@ -161,7 +167,12 @@ internal class ColorOsAllAppsContent(
 
     fun sidebarHidden(): Boolean = (getMain.call(handler)?.let { getState.call(it) } as? Enum<*>)?.name == "FLOAT_BAR_SHOWING"
 
-    fun leftSide(): Boolean = getMain.call(handler)?.let { getLeft.call(it) as Boolean } ?: false
+    /**
+     * 面板呼出方位：优先用模块下发的真实方位；未下发时回退原厂标志位
+     * （保持 ColorOS 16 等旧路径行为不变）。
+     */
+    fun leftSide(): Boolean =
+        leftSideOverride ?: getMain.call(handler)?.let { getLeft.call(it) as Boolean } ?: false
 
     fun startLoading() {
         if (closed || loading) return

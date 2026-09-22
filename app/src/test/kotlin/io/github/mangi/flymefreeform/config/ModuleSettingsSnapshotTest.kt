@@ -122,6 +122,44 @@ class ModuleSettingsSnapshotTest {
         val restored = ModuleSettingsSnapshot.readFrom(preferences)
         assertEquals(160, restored.cornerTriggerRangeDp)
     }
+
+    /** @author bomo 面板缩放：读入越界脏值应钳到合法区间（滑条与远端配置都可能写入越界值）。 */
+    @Test
+    fun panelScaleIsClampedWhenRead() {
+        val tooSmall = InMemoryPreferences(ModulePreferences.KEY_PANEL_SCALE_PERCENT to 10)
+        val tooLarge = InMemoryPreferences(ModulePreferences.KEY_PANEL_SCALE_PERCENT to 400)
+
+        assertEquals(
+            ModulePreferences.MIN_PANEL_SCALE_PERCENT,
+            ModuleSettingsSnapshot.readFrom(tooSmall).panelScalePercent,
+        )
+        assertEquals(
+            ModulePreferences.MAX_PANEL_SCALE_PERCENT,
+            ModuleSettingsSnapshot.readFrom(tooLarge).panelScalePercent,
+        )
+    }
+
+    /** @author bomo 面板缩放：写入时钳制并原样回读（设置界面滑条依赖这个闭环）。 */
+    @Test
+    fun panelScaleIsClampedAndRoundTripsWhenWritten() {
+        val preferences = InMemoryPreferences()
+        ModuleSettingsSnapshot(panelScalePercent = 5).writeTo(preferences.edit()).commit()
+
+        assertEquals(
+            ModulePreferences.MIN_PANEL_SCALE_PERCENT,
+            preferences.getInt(ModulePreferences.KEY_PANEL_SCALE_PERCENT, 0),
+        )
+
+        val restored = ModuleSettingsSnapshot.readFrom(preferences)
+        assertEquals(ModulePreferences.MIN_PANEL_SCALE_PERCENT, restored.panelScalePercent)
+    }
+
+    /** @author bomo 默认缩放 = 80%（2026-09-22 与用户确认的取值），改默认值必须同时改这里的期望。 */
+    @Test
+    fun panelScaleDefaultIsEightyPercent() {
+        assertEquals(80, ModulePreferences.DEFAULT_PANEL_SCALE_PERCENT)
+        assertEquals(80, ModuleSettingsSnapshot().panelScalePercent)
+    }
 }
 
 private class InMemoryPreferences(vararg initialValues: Pair<String, Any>) : SharedPreferences {

@@ -66,6 +66,17 @@ internal class FrameworkConnectionRepository {
             )
         }
 
+    /**
+     * @author bomo 设置「全部」面板的整体缩放百分比。
+     * 只写配置；面板在**下次打开**时读取，因此不需要重启或重装。
+     */
+    fun setPanelScalePercent(percent: Int) =
+        updateSettings {
+            it.copy(
+                panelScalePercent = ModulePreferences.coercePanelScalePercent(percent),
+            )
+        }
+
     fun setOutsideTapCloseMode(mode: OutsideTapCloseMode) =
         updateSettings { it.copy(outsideTapCloseMode = mode) }
 

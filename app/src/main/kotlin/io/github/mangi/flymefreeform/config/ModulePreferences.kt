@@ -27,6 +27,17 @@ internal object ModulePreferences {
      * 只能由侧边栏进程从原厂 ToolEntryHelper 导出。
      */
     const val KEY_TOOL_CATALOG = "tool_catalog_v1"
+
+    /**
+     * @author bomo 「全部」面板整体缩放百分比（80 = 原尺寸的 80%）。
+     * 写入方是模块 App（设置界面的滑条），侧边栏进程开面板时按只读方式取值，
+     * 因此改完滑条**下次打开面板即生效**，无需重启。
+     */
+    const val KEY_PANEL_SCALE_PERCENT = "panel_scale_percent_v1"
+    const val DEFAULT_PANEL_SCALE_PERCENT = 80
+    const val MIN_PANEL_SCALE_PERCENT = 50
+    const val MAX_PANEL_SCALE_PERCENT = 100
+
     const val DEFAULT_ENABLED = false
     const val DEFAULT_CORNER_ENABLED = true
     const val DEFAULT_CORNER_TRIGGER_RANGE_DP = 84
@@ -63,4 +74,8 @@ internal object ModulePreferences {
 
     fun coerceCornerTriggerRangeDp(value: Int): Int =
         value.coerceIn(MIN_CORNER_TRIGGER_RANGE_DP, MAX_CORNER_TRIGGER_RANGE_DP)
+
+    /** @author bomo 面板缩放百分比钳制；下限防止条目小到点不中，上限即原尺寸。 */
+    fun coercePanelScalePercent(value: Int): Int =
+        value.coerceIn(MIN_PANEL_SCALE_PERCENT, MAX_PANEL_SCALE_PERCENT)
 }

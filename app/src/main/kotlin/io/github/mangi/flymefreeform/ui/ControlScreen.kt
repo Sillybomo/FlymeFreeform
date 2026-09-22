@@ -87,6 +87,8 @@ internal fun ControlScreen(
     onLeftCornerEnabledChange: (Boolean) -> Unit,
     onRightCornerEnabledChange: (Boolean) -> Unit,
     onCornerTriggerRangeChange: (Int) -> Unit,
+    /** @author bomo 「全部」面板缩放百分比变更（设置界面滑条，热生效）。 */
+    onPanelScaleChange: (Int) -> Unit,
     onOutsideTapCloseModeChange: (OutsideTapCloseMode) -> Unit,
     onHandleSwipeUpToMiniEnabledChange: (Boolean) -> Unit,
     onPauseInLandscapeChange: (Boolean) -> Unit,
@@ -160,6 +162,7 @@ internal fun ControlScreen(
                             onRightCornerEnabledChange,
                             onCornerTriggerRangeChange,
                             onCornerRangePreviewChange = { cornerRangePreviewDp = it },
+                            onPanelScaleChange = onPanelScaleChange,
                             onNavigateToPinnedApps,
                         )
                     }
@@ -315,6 +318,8 @@ private fun SettingsCard(
     onRightCornerEnabledChange: (Boolean) -> Unit,
     onCornerTriggerRangeChange: (Int) -> Unit,
     onCornerRangePreviewChange: (Int?) -> Unit,
+    /** @author bomo 「全部」面板缩放百分比变更。 */
+    onPanelScaleChange: (Int) -> Unit,
     onNavigateToPinnedApps: () -> Unit,
 ) {
     val moduleSummary =
@@ -368,6 +373,17 @@ private fun SettingsCard(
             summary = stringResource(R.string.corner_trigger_range_summary),
             onPreviewChange = onCornerRangePreviewChange,
             onCommit = onCornerTriggerRangeChange,
+        )
+        // @author bomo 面板缩放滑条：写入远端配置后，侧边栏进程在**下次打开面板**时读取，
+        // 因此调整后无需重启/重装即可看到效果。
+        RemotePercentSliderPreference(
+            icon = Icons.Rounded.Dashboard,
+            confirmedValue = state.settings.panelScalePercent,
+            isUpdating = state.isUpdating,
+            enabled = state.canChangeSettings,
+            title = stringResource(R.string.panel_scale_title),
+            summary = stringResource(R.string.panel_scale_summary),
+            onCommit = onPanelScaleChange,
         )
         ArrowPreference(
             title = stringResource(R.string.radial_apps_title),
@@ -424,6 +440,56 @@ private fun RemoteDpSliderPreference(
             onPreviewChange(null)
             val committed =
                 ModulePreferences.coerceCornerTriggerRangeDp(draftValue.roundToInt())
+            draftValue = committed.toFloat()
+            if (committed != confirmedValue) onCommit(committed)
+        },
+    )
+}
+
+/**
+ * @author bomo 百分比滑条（「全部」面板缩放专用）。
+ *
+ * 与 [RemoteDpSliderPreference] 的差异只有钳制函数与文案；刻意独立实现而不改写既有 dp 滑条，
+ * 以免影响已发布行为。若以后出现第三个同类滑条，应抽出通用实现合并。
+ */
+@Composable
+private fun RemotePercentSliderPreference(
+    icon: ImageVector,
+    confirmedValue: Int,
+    isUpdating: Boolean,
+    enabled: Boolean,
+    title: String,
+    summary: String,
+    onCommit: (Int) -> Unit,
+) {
+    var draftValue by rememberSaveable { mutableFloatStateOf(confirmedValue.toFloat()) }
+    var isDragging by remember { mutableStateOf(false) }
+    LaunchedEffect(confirmedValue, isUpdating, enabled) {
+        if (!isDragging && !isUpdating) draftValue = confirmedValue.toFloat()
+    }
+    SliderPreference(
+        value = draftValue,
+        onValueChange = { value ->
+            isDragging = true
+            draftValue =
+                ModulePreferences.coercePanelScalePercent(value.roundToInt()).toFloat()
+        },
+        title = title,
+        summary = summary,
+        valueText = stringResource(R.string.percent_value, draftValue.roundToInt()),
+        enabled = enabled,
+        startAction = { PreferenceIcon(icon, enabled) },
+        valueRange =
+            ModulePreferences.MIN_PANEL_SCALE_PERCENT.toFloat()..
+                ModulePreferences.MAX_PANEL_SCALE_PERCENT.toFloat(),
+        steps =
+            ModulePreferences.MAX_PANEL_SCALE_PERCENT -
+                ModulePreferences.MIN_PANEL_SCALE_PERCENT -
+                1,
+        onValueChangeFinished = {
+            isDragging = false
+            val committed =
+                ModulePreferences.coercePanelScalePercent(draftValue.roundToInt())
             draftValue = committed.toFloat()
             if (committed != confirmedValue) onCommit(committed)
         },

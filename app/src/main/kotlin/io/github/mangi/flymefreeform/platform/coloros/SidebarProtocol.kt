@@ -63,6 +63,14 @@ internal object SidebarProtocol {
     const val REQUEST_ID = "request_id"
     const val DEADLINE = "deadline_uptime"
     const val TARGET_UID = "target_uid"
+
+    /**
+     * @author bomo 面板会话携带的「呼出方位」。
+     * 原厂 `MainPanelMainView.getMIsLeft()` 只在原厂自己的面板流程里被写入，
+     * 本模块自建面板从不经过它，读到的恒为默认值（于是左右都贴左）。
+     * 因此改由 system_server 按手势真实方位随消息下发，覆盖该标志位。
+     */
+    const val PANEL_LEFT_SIDE = "panel_left_side"
     // 原生常驻端允许绑定等待 5 秒，额外留出框架加载与桥接握手时间。
     const val PREPARE_TIMEOUT_MS = 7_000L
     const val OPEN_TIMEOUT_MS = 3_000L
@@ -89,6 +97,11 @@ internal object SidebarProtocol {
         deadline: Long,
         targetUid: Int,
         replyTo: Messenger? = null,
+        /**
+         * @author bomo 面板呼出方位（仅面板会话相关消息携带；null 表示本条消息无关，
+         * 不写入 Bundle，接收方回退到原厂标志位）。
+         */
+        panelLeftSide: Boolean? = null,
     ): Message =
         Message.obtain().apply {
             this.what = what
@@ -99,6 +112,7 @@ internal object SidebarProtocol {
                     putString(REQUEST_ID, id)
                     putLong(DEADLINE, deadline)
                     putInt(TARGET_UID, targetUid)
+                    panelLeftSide?.let { putBoolean(PANEL_LEFT_SIDE, it) }
                 }
         }
 

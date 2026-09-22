@@ -16,6 +16,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
+import io.github.mangi.flymefreeform.config.ModulePreferences
 import io.github.mangi.flymefreeform.window.AllAppsPanelGeometry
 import io.github.mangi.flymefreeform.window.AllAppsPanelMotion
 import java.lang.reflect.Method
@@ -24,6 +25,10 @@ import java.lang.reflect.Method
 internal class ColorOsAllAppsWindow(
     private val context: Context,
     val content: ColorOsAllAppsContent,
+    /**
+     * @author bomo 面板整体缩放百分比，来自设置界面滑条（经 [ModulePreferences] 下发）。
+     */
+    panelScalePercent: Int,
     private val onShown: () -> Unit,
     private val onClosed: () -> Unit,
     private val onExitStarted: () -> Unit,
@@ -44,14 +49,20 @@ internal class ColorOsAllAppsWindow(
     private val mode = content.mode()
     private val leftSide = content.leftSide()
 
+    /** @author bomo 设置界面滑条写入的缩放百分比。 */
+    private val preferredScalePercent =
+        ModulePreferences.coercePanelScalePercent(panelScalePercent)
+
     /**
-     * @author bomo 「全部」面板整体缩放比例，默认缩小 1/3（面板占用屏幕过大）。
+     * @author bomo 「全部」面板整体缩放比例（默认取滑条值）。
      * 内容按原生尺寸布局后等比缩放，网格间距随之等比缩小。
-     * 可经 Settings.Global 覆盖：`adb shell settings put global flymefreeform_panel_scale 60`，
-     * 范围 50~100，下次打开面板即生效。
+     * 仍可用 `adb shell settings put global flymefreeform_panel_scale 60` 覆盖（优先级更高），
+     * 范围 [ModulePreferences.MIN_PANEL_SCALE_PERCENT]~100，下次打开面板即生效。
      */
-    private val panelScale = tunedInt(PANEL_SCALE_KEY, PANEL_SCALE_DEFAULT_PERCENT)
-        .coerceIn(PANEL_SCALE_MIN_PERCENT, 100) / 100f
+    private val panelScale =
+        ModulePreferences.coercePanelScalePercent(
+            tunedInt(PANEL_SCALE_KEY, preferredScalePercent),
+        ) / 100f
     private var insets: WindowInsets? = null
     private var displayWidth = 0
     private var displayHeight = 0
@@ -422,13 +433,11 @@ internal class ColorOsAllAppsWindow(
         const val BLUR_BEHIND_RADIUS_PX = 300
         const val BLUR_RADIUS_KEY = "flymefreeform_blur_radius"
 
-        /** @author bomo 面板整体缩放默认值（百分比）：67 = 缩小 1/3。 */
-        const val PANEL_SCALE_DEFAULT_PERCENT = 67
-
-        /** @author bomo 面板整体缩放下限（百分比）；再小会难以点按条目。 */
-        const val PANEL_SCALE_MIN_PERCENT = 50
-
-        /** 覆盖键：`adb shell settings put global flymefreeform_panel_scale 60` */
+        /**
+         * @author bomo 覆盖键（调试用）：`adb shell settings put global flymefreeform_panel_scale 60`。
+         * 取值下限与范围统一见 [ModulePreferences.MIN_PANEL_SCALE_PERCENT] /
+         * [ModulePreferences.MAX_PANEL_SCALE_PERCENT]，不再在本类重复定义。
+         */
         const val PANEL_SCALE_KEY = "flymefreeform_panel_scale"
     }
 }

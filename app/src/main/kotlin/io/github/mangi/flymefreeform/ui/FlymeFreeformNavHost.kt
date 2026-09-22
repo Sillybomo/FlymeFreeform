@@ -31,6 +31,8 @@ internal fun FlymeFreeformNavHost(
     onLeftCornerEnabledChange: (Boolean) -> Unit,
     onRightCornerEnabledChange: (Boolean) -> Unit,
     onCornerTriggerRangeChange: (Int) -> Unit,
+    /** @author bomo 「全部」面板缩放百分比变更。 */
+    onPanelScaleChange: (Int) -> Unit,
     onOutsideTapCloseModeChange: (OutsideTapCloseMode) -> Unit,
     onHandleSwipeUpToMiniEnabledChange: (Boolean) -> Unit,
     onPauseInLandscapeChange: (Boolean) -> Unit,
@@ -69,6 +71,7 @@ internal fun FlymeFreeformNavHost(
                         onLeftCornerEnabledChange = onLeftCornerEnabledChange,
                         onRightCornerEnabledChange = onRightCornerEnabledChange,
                         onCornerTriggerRangeChange = onCornerTriggerRangeChange,
+                        onPanelScaleChange = onPanelScaleChange,
                         onOutsideTapCloseModeChange = onOutsideTapCloseModeChange,
                         onHandleSwipeUpToMiniEnabledChange =
                             onHandleSwipeUpToMiniEnabledChange,

@@ -83,7 +83,15 @@ internal class ColorOsSidebarClient(
     /** 面板条目点击 → 记入「最近小窗」。 */
     var onRecentComponent: ((ComponentName) -> Unit)? = null
 
+    /**
+     * @author bomo 打开「全部」面板。
+     *
+     * @param leftSide 本次实际呼出方位：true = 左下角呼出（面板贴左），false = 右下角呼出（面板贴右）。
+     *   必须由 system_server 按手势方位传入 —— 原厂 `mIsLeft` 标志位在本模块自建面板路径下恒为默认值，
+     *   依赖它会导致左右两侧都贴左。
+     */
     fun open(
+        leftSide: Boolean,
         beforeOpen: () -> Boolean, onResult: (Outcome) -> Unit,
         onExitStarted: () -> Unit, onHideBackdrop: (() -> Unit) -> Unit, onClosed: () -> Unit,
     ): Boolean {
@@ -91,6 +99,7 @@ internal class ColorOsSidebarClient(
         val request =
             Request(
                 MorePanelSession(UUID.randomUUID().toString(), SystemClock.uptimeMillis() + SidebarProtocol.PREPARE_TIMEOUT_MS),
+                leftSide,
                 beforeOpen, onResult, onExitStarted, onHideBackdrop, onClosed,
             )
         current = request
@@ -390,7 +399,18 @@ internal class ColorOsSidebarClient(
         val deadline = request.session.deadline
         execute(request) {
             if (request.active.get()) {
-                remote.send(SidebarProtocol.message(what, request.session.id, deadline, request.targetUid, reply))
+                // @author bomo 每条会话消息都带上呼出方位：侧边栏在 PREPARE 阶段就构造面板内容，
+                // 早于 OPEN，因此不能只在 OPEN 上带。
+                remote.send(
+                    SidebarProtocol.message(
+                        what,
+                        request.session.id,
+                        deadline,
+                        request.targetUid,
+                        reply,
+                        panelLeftSide = request.leftSide,
+                    ),
+                )
             }
         }
     }
@@ -487,6 +507,8 @@ internal class ColorOsSidebarClient(
 
     private inner class Request(
         val session: MorePanelSession,
+        /** @author bomo 本会话的面板呼出方位，随每条会话消息下发（见 [SidebarProtocol.PANEL_LEFT_SIDE]）。 */
+        val leftSide: Boolean,
         var beforeOpen: (() -> Boolean)?,
         var onResult: ((Outcome) -> Unit)?,
         var onExitStarted: (() -> Unit)?,

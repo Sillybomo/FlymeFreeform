@@ -582,6 +582,9 @@ internal class ColorOsFreeformCoordinator(
         activeEnvironmentApproved = false
         gestureEngine.cancel()
         if (!sidebar.open(
+                // @author bomo 用手势真实方位决定面板锚向：原厂 mIsLeft 在自建面板路径下恒为默认值，
+                // 会导致右侧呼出也贴左。
+                leftSide = view.invokedSide == io.github.mangi.flymefreeform.gesture.CornerSide.Left,
                 beforeOpen = {
                     if (overlay === view && lastSettings.enabled && isGestureEnvironmentAllowed()) {
                         view.retainBackdropForPanel()

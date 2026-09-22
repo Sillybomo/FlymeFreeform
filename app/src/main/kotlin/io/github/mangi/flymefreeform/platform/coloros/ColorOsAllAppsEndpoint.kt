@@ -229,7 +229,16 @@ internal class ColorOsAllAppsEndpoint(
                 return@safely
             }
             if (message.what == SidebarProtocol.PREPARE) {
-                prepare(id, data.getLong(SidebarProtocol.DEADLINE), reply)
+                // @author bomo 呼出方位随 PREPARE 下发：面板内容在 prepare 阶段就已构造
+                // （比 OPEN 早），晚了就赶不上 showAllPanel(左/右) 与窗口锚定。
+                // 缺键时留 null → 回退原厂标志位，保持旧路径行为。
+                val panelLeftSide =
+                    if (data.containsKey(SidebarProtocol.PANEL_LEFT_SIDE)) {
+                        data.getBoolean(SidebarProtocol.PANEL_LEFT_SIDE)
+                    } else {
+                        null
+                    }
+                prepare(id, data.getLong(SidebarProtocol.DEADLINE), panelLeftSide, reply)
                 return@safely
             }
             val current = request?.takeIf { it.id == id && it.reply.binder == reply.binder } ?: return@safely
@@ -246,6 +255,8 @@ internal class ColorOsAllAppsEndpoint(
                     current.phase = Phase.Opening
                     val content = current.content ?: return@safely
                     val window = ColorOsAllAppsWindow(service, content,
+                        // @author bomo 缩放取自设置界面滑条（App 写入的远端配置，本进程只读）。
+                        configuration.snapshot.panelScalePercent,
                         onShown = {
                             if (request === current && current.phase == Phase.Opening) {
                                 current.phase = Phase.Shown
@@ -287,12 +298,16 @@ internal class ColorOsAllAppsEndpoint(
         return true
     }
 
-    private fun prepare(id: String, deadline: Long, reply: Messenger) {
+    /**
+     * @param panelLeftSide 本次呼出方位（null = 未下发，回退原厂标志位）。
+     */
+    private fun prepare(id: String, deadline: Long, panelLeftSide: Boolean?, reply: Messenger) {
         if (request != null || !environmentAllowed() || !SidebarProtocol.isValidDeadline(deadline, SystemClock.uptimeMillis(), SidebarProtocol.PREPARE_TIMEOUT_MS)) {
             send(reply, id, SidebarProtocol.ABORTED)
             return
         }
         val next = Request(id, deadline, reply)
+        next.leftSide = panelLeftSide
         request = next
         reply.binder.linkToDeath(next.death, 0)
         next.deathLinked = true
@@ -312,6 +327,7 @@ internal class ColorOsAllAppsEndpoint(
         watchingConfiguration = true
         next.content = ColorOsAllAppsContent(
             loader,
+            leftSideOverride = panelLeftSide,
             recentFreeform = { SharedSettings.readRecentFreeform(service) },
             onRecentCandidate = { component ->
                 request?.reply?.let { reply ->
@@ -426,6 +442,8 @@ internal class ColorOsAllAppsEndpoint(
 
     private enum class Phase { Preparing, Prepared, Opening, Shown, Active }
     private inner class Request(val id: String, var deadline: Long, val reply: Messenger) {
+        /** @author bomo 本次呼出方位（null = 未下发，回退原厂标志位）。 */
+        var leftSide: Boolean? = null
         var phase = Phase.Preparing
         var exitStarted = false
         var pendingTool: (() -> Unit)? = null

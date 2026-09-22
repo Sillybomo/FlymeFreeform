@@ -123,6 +123,14 @@ internal class CornerRadialOverlayView(
     private val radialImages = mutableStateOf<List<ImageBitmap>>(emptyList())
     private var panelImages: Map<android.content.ComponentName, ImageBitmap> = emptyMap()
     private var side = CornerSide.Right
+
+    /**
+     * @author bomo 本次呼出方位（只读）。「全部」面板需要据此决定靠左还是靠右锚定：
+     * 原厂 `mIsLeft` 标志位在本模块自建面板路径下不可信（恒为默认值），
+     * 唯一可靠的来源就是手势本身。
+     */
+    val invokedSide: CornerSide
+        get() = side
     private var latestX = 0f
     private var latestY = 0f
     private var selectedIndex: Int? = null
