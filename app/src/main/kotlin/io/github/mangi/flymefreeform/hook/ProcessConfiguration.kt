@@ -36,6 +36,20 @@ internal class ProcessConfiguration(
         listener(snapshot)
     }
 
+    /**
+     * @author bomo 主动重读远端配置（不依赖跨进程变更推送）。
+     *
+     * LSPosed 远端偏好的 `OnSharedPreferenceChangeListener` **不会跨进程回调**
+     * （2026-09-22 实测：App 进程写入后，Hook 进程侧无任何 `MODULE_STATE_*` 记录，
+     * 快照永远停留在 start() 时的值），因此需要「不重启即生效」的设置
+     * （如面板缩放）必须在消费点之前由本方法主动拉取。
+     * 读取本身走 provider，是实时的；刷新后照常通知 [listeners]。
+     */
+    fun refreshNow() {
+        val store = preferences ?: return
+        refresh(store, false)
+    }
+
     fun removeObserver(listener: (ModuleSettingsSnapshot) -> Unit) {
         listeners -= listener
     }
