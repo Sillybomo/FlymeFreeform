@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
 import android.view.InputDevice
+import android.view.InputEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -27,6 +28,8 @@ import io.github.mangi.flymefreeform.gesture.GesturePhase
 import io.github.mangi.flymefreeform.gesture.TriggerHitZone
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import kotlin.math.hypot
+import kotlin.math.max
 
 /** SystemUI 中的受信任 SPY 热区；只抢占触摸，菜单状态仍由 system_server 持有。 */
 @SuppressLint("DiscouragedPrivateApi", "PrivateApi", "RtlHardcoded", "WrongConstant")
@@ -61,11 +64,23 @@ internal class SystemUiCornerInputMonitor(
         InputManager::class.java.getDeclaredMethod("pilferPointers", IBinder::class.java).apply {
             isAccessible = true
         }
+    private val injectInputEventMethod: Method? =
+        try {
+            InputManager::class.java.getMethod(
+                "injectInputEvent",
+                InputEvent::class.java,
+                Int::class.javaPrimitiveType,
+            )
+        } catch (_: ReflectiveOperationException) {
+            null
+        }
     private val bindings = linkedMapOf<CornerSide, CornerBinding>()
 
     private var settings = ModuleSettingsSnapshot(enabled = false)
     private var pendingSettings: ModuleSettingsSnapshot? = null
     private var lastPilferFailureAt = -PILFER_FAILURE_LOG_INTERVAL_MS
+    private var lastClaimLogAt = -CLAIM_LOG_INTERVAL_MS
+    private var lastTapReplayLogAt = -CLAIM_LOG_INTERVAL_MS
 
     fun start() {
         environmentState.start(context)
@@ -137,6 +152,8 @@ internal class SystemUiCornerInputMonitor(
                 zone = zone,
                 canClaim = { canClaim(side) },
                 pilfer = ::pilfer,
+                onClaimed = ::logClaimed,
+                onTapReplay = ::replayTap,
                 onStreamFinished = ::finishStream,
             )
         try {
@@ -192,6 +209,61 @@ internal class SystemUiCornerInputMonitor(
         module.log(Log.WARN, TAG, "SYSTEMUI_CORNER_SPY_PILFER_FAILED", exception)
     }
 
+    /** 提前抢断的取证日志；限流，只用于区分「没抢」和「抢了但系统仍起来」。 */
+    private fun logClaimed() {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastClaimLogAt < CLAIM_LOG_INTERVAL_MS) return
+        lastClaimLogAt = now
+        module.log(Log.INFO, TAG, "SYSTEMUI_CORNER_SPY_CLAIMED", null)
+    }
+
+    /**
+     * 未被选中的角落点击：我们把指针流从应用手里抢走了，这里把这一下原样补发回去，
+     * 让角落里的普通点击仍然生效（DOWN 即抢断的前提）。
+     * 补发事件的 toolType 为 UNKNOWN，热区只认 FINGER，所以不会被自己再次抢断。
+     */
+    private fun replayTap(rawX: Float, rawY: Float) {
+        val method = injectInputEventMethod ?: return
+        val downTime = SystemClock.uptimeMillis()
+        val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, rawX, rawY, 0)
+        val up =
+            MotionEvent.obtain(
+                downTime,
+                downTime + TAP_REPLAY_DURATION_MS,
+                MotionEvent.ACTION_UP,
+                rawX,
+                rawY,
+                0,
+            )
+        var failure: Throwable? = null
+        try {
+            down.source = InputDevice.SOURCE_TOUCHSCREEN
+            up.source = InputDevice.SOURCE_TOUCHSCREEN
+            method.invoke(inputManager, down, INJECT_MODE_ASYNC)
+            method.invoke(inputManager, up, INJECT_MODE_ASYNC)
+        } catch (exception: ReflectiveOperationException) {
+            failure = exception
+        } catch (exception: RuntimeException) {
+            failure = exception
+        } finally {
+            down.recycle()
+            up.recycle()
+        }
+        logTapReplay(failure)
+    }
+
+    private fun logTapReplay(failure: Throwable?) {
+        val now = SystemClock.uptimeMillis()
+        if (now - lastTapReplayLogAt < CLAIM_LOG_INTERVAL_MS) return
+        lastTapReplayLogAt = now
+        module.log(
+            if (failure == null) Log.INFO else Log.WARN,
+            TAG,
+            if (failure == null) "SYSTEMUI_CORNER_SPY_TAP_REPLAYED" else "SYSTEMUI_CORNER_SPY_TAP_REPLAY_FAILED",
+            failure,
+        )
+    }
+
     private fun finishStream() {
         mainHandler.post {
             if (bindings.values.any { it.view.streamActive }) return@post
@@ -243,15 +315,25 @@ internal class SystemUiCornerInputMonitor(
         var zone: TriggerHitZone,
         private val canClaim: () -> Boolean,
         private val pilfer: (View) -> Boolean,
+        private val onClaimed: () -> Unit,
+        private val onTapReplay: (Float, Float) -> Unit,
         private val onStreamFinished: () -> Unit,
     ) : View(context) {
         private val gestureEngine = CornerGestureEngine()
         private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
         private val density = context.resources.displayMetrics.density
+        private val claimInwardPx = CornerTriggerRegion.claimInwardPx(density)
         private var activeConfig: CornerGestureConfig? = null
         private var activePointerId = -1
         private var tracking = false
-        private var pilferAttempted = false
+        private var downX = 0f
+        private var downY = 0f
+        private var downRawX = 0f
+        private var downRawY = 0f
+        private var maxDisplacement = 0f
+        private var activated = false
+        private var claimPilfered = false
+        private var activatePilfered = false
 
         val streamActive: Boolean
             get() = tracking
@@ -297,10 +379,20 @@ internal class SystemUiCornerInputMonitor(
                                 rightEnabled = side == CornerSide.Right,
                             )
                         activePointerId = event.getPointerId(0)
+                        downX = event.x
+                        downY = event.y
+                        downRawX = event.rawX
+                        downRawY = event.rawY
+                        maxDisplacement = 0f
+                        activated = false
                         gestureEngine.down(activePointerId, event.x, event.y, config)
                         if (gestureEngine.phase == GesturePhase.Armed) {
                             activeConfig = config
                             tracking = true
+                            // 第一帧独占：DOWN 就抢断，桌面的上滑手势状态机来不及启动，
+                            // 竞速从原理上消失（未被选中的点击稍后原样补发）。
+                            claimPilfered = pilfer(this)
+                            if (claimPilfered) onClaimed()
                         }
                     }
                 }
@@ -314,21 +406,34 @@ internal class SystemUiCornerInputMonitor(
                         }
                         val config = activeConfig
                         val pointerIndex = event.findPointerIndex(activePointerId)
-                        val action =
-                            if (config != null && pointerIndex >= 0) {
+                        if (config == null || pointerIndex < 0) {
+                            gestureEngine.cancel()
+                        } else {
+                            val x = event.getX(pointerIndex)
+                            val y = event.getY(pointerIndex)
+                            maxDisplacement = max(maxDisplacement, hypot(x - downX, y - downY))
+                            val action =
                                 gestureEngine.move(
                                     pointerId = activePointerId,
                                     pointerCount = event.pointerCount,
-                                    x = event.getX(pointerIndex),
-                                    y = event.getY(pointerIndex),
+                                    x = x,
+                                    y = y,
                                     config = config,
                                 )
-                            } else {
-                                gestureEngine.cancel()
+                            if (action is GestureAction.Activate) activated = true
+                            // 兜底：万一 DOWN 时抢断没成功，一出现内向位移就补抢；
+                            // 纯竖直滑动不抢，仍留给系统上滑。
+                            if (!claimPilfered &&
+                                CornerTriggerRegion.inwardDistance(side, downX, x) >= claimInwardPx
+                            ) {
+                                claimPilfered = pilfer(this)
+                                if (claimPilfered) onClaimed()
                             }
-                        if (!pilferAttempted && action is GestureAction.Activate) {
-                            pilferAttempted = true
-                            pilfer(this)
+                            // 到达展开阈值时再抢一次，防止中途被系统监视器后手夺走。
+                            if (!activatePilfered && action is GestureAction.Activate) {
+                                activatePilfered = true
+                                pilfer(this)
+                            }
                         }
                     }
                 }
@@ -339,11 +444,24 @@ internal class SystemUiCornerInputMonitor(
 
                 MotionEvent.ACTION_UP,
                 MotionEvent.ACTION_CANCEL -> {
+                    // 抢了流但根本没展开菜单、且全程没怎么动 → 这是一次普通点击，原样补发。
+                    val tapToReplay =
+                        if (event.actionMasked == MotionEvent.ACTION_UP &&
+                            tracking &&
+                            claimPilfered &&
+                            !activated &&
+                            CornerTriggerRegion.tapReplayable(maxDisplacement, touchSlop)
+                        ) {
+                            downRawX to downRawY
+                        } else {
+                            null
+                        }
                     if (event.actionMasked == MotionEvent.ACTION_UP && tracking) {
                         gestureEngine.up(event.getPointerId(event.actionIndex))
                     }
                     resetTracking()
                     onStreamFinished()
+                    tapToReplay?.let { (rawX, rawY) -> onTapReplay(rawX, rawY) }
                 }
 
                 else -> Unit
@@ -356,7 +474,14 @@ internal class SystemUiCornerInputMonitor(
             activeConfig = null
             activePointerId = -1
             tracking = false
-            pilferAttempted = false
+            downX = 0f
+            downY = 0f
+            downRawX = 0f
+            downRawY = 0f
+            maxDisplacement = 0f
+            activated = false
+            claimPilfered = false
+            activatePilfered = false
         }
     }
 
@@ -366,5 +491,8 @@ internal class SystemUiCornerInputMonitor(
         const val CORNER_GESTURE_WINDOW_TYPE = 2024
         const val CORNER_INPUT_CHANNEL_TITLE = "FlymeFreeform-corner-input"
         const val PILFER_FAILURE_LOG_INTERVAL_MS = 10_000L
+        const val CLAIM_LOG_INTERVAL_MS = 2_000L
+        const val INJECT_MODE_ASYNC = 0
+        const val TAP_REPLAY_DURATION_MS = 40L
     }
 }
