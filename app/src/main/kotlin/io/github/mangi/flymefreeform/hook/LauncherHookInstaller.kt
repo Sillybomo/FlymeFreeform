@@ -21,6 +21,24 @@ import io.github.mangi.flymefreeform.gesture.GesturePhase
 import java.lang.reflect.Field
 import java.lang.reflect.Method
 
+private const val LEGACY_TOUCH_SERVICE_CLASS = "com.android.quickstep.OplusBaseTouchInteractionService"
+private const val TOUCH_SERVICE_CLASS = "com.android.quickstep.TouchInteractionService"
+
+/**
+ * 优先解析旧版桌面触摸服务，旧类不存在时再尝试新版类名，避免双类共存时改变旧版行为。
+ *
+ * @author bomo
+ * @param classLoader 桌面进程的类加载器
+ * @return 可供输入入口签名解析的服务类
+ * @throws ClassNotFoundException 新旧服务类均不存在
+ */
+internal fun loadTouchServiceClass(classLoader: ClassLoader): Class<*> =
+    try {
+        classLoader.loadClass(LEGACY_TOUCH_SERVICE_CLASS)
+    } catch (_: ClassNotFoundException) {
+        classLoader.loadClass(TOUCH_SERVICE_CLASS)
+    }
+
 /** ColorOS Quickstep 输入入口；命中角落的指针流从 DOWN 起不再进入系统手势链。 */
 @SuppressLint("DiscouragedPrivateApi", "PrivateApi")
 internal class LauncherHookInstaller(
@@ -45,11 +63,11 @@ internal class LauncherHookInstaller(
 
     fun install(classLoader: ClassLoader) {
         try {
-            val serviceClass = classLoader.loadClass(TOUCH_SERVICE_CLASS)
+            val serviceClass = loadTouchServiceClass(classLoader)
             val inputMethod =
                 resolveInputEntry(serviceClass)
                     ?: throw ReflectiveOperationException(
-                        "$TOUCH_SERVICE_CLASS#$INPUT_METHOD_NAME unavailable",
+                        "$serviceClass#$INPUT_METHOD_NAME unavailable",
                     )
             inputMethod.isAccessible = true
             resolveInputMonitor(serviceClass)
@@ -296,7 +314,6 @@ internal class LauncherHookInstaller(
 
     private companion object {
         const val TAG = "FlymeFreeform"
-        const val TOUCH_SERVICE_CLASS = "com.android.quickstep.OplusBaseTouchInteractionService"
         const val INPUT_METHOD_NAME = "onInputEventInternal"
         const val INPUT_MONITOR_CLASS = "android.view.InputMonitor"
         val PILFER_METHOD_NAMES = listOf("forcePilferPointers", "pilferPointers")
